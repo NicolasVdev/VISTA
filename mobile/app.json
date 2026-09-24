@@ -1,0 +1,33 @@
+{
+  "expo": {
+    "name": "VISTA",
+    "slug": "vista",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "fr.nicolasvdev.vista"
+    },
+    "android": {
+      "package": "fr.nicolasvdev.vista"
+    },
+    "plugins": [
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "VISTA utilise le microphone pour enregistrer vos observations de visite."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "VISTA accède aux photos que vous choisissez pour documenter une visite.",
+          "cameraPermission": "VISTA utilise l'appareil photo pour documenter une visite.",
+          "microphonePermission": false
+        }
+      ]
+    ]
+  }
+}

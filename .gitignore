@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Expo
+.expo/
+dist/
+dist-test/
+web-build/
+expo-env.d.ts
+
+# Native build artifacts
+android/
+ios/
+
+# Environment and local files
+.env
+.env.*
+!.env.example
+*.log
+
+# OS and editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
