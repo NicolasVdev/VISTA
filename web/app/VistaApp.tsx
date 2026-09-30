@@ -2,21 +2,32 @@
 
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
-  clearCaptures,
-  listCaptures,
-  saveCapture,
-  type VistaCapture,
+  loadFieldState,
+  resetFieldState,
+  saveObservation,
+  saveVisit,
+  saveZoneProgress,
+  type VistaMedia,
+  type VistaObservation,
+  type VistaVisit,
+  type VistaZoneProgress,
+  type ZoneStatus,
+  type ZoneTemplate,
 } from "./lib/vista-db";
 
 type Screen = "home" | "visits" | "actions" | "visit" | "review";
-type CaptureView = VistaCapture & { previewUrl?: string };
+type MediaView = VistaMedia & { previewUrl: string };
+type ObservationView = Omit<VistaObservation, "audio" | "photos"> & {
+  audio?: MediaView;
+  photos: MediaView[];
+};
 
 type InstallPrompt = Event & {
   prompt: () => Promise<void>;
   userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
 };
 
-const ZONES = [
+const ZONES: ZoneTemplate[] = [
   { id: "toiture", label: "Toiture", hint: "Étanchéité, évacuations, équipements" },
   { id: "etage-6", label: "6e étage", hint: "Palier, éclairage, portes, murs" },
   { id: "etage-5", label: "5e étage", hint: "Palier, éclairage, portes, murs" },
@@ -28,12 +39,22 @@ const ZONES = [
   { id: "sous-sol", label: "Sous-sol & parking", hint: "Sas, caves, parkings, électricité" },
 ];
 
-const VISIT_KEY = "vista-active-zone";
+const STATUS_LABELS: Record<ZoneStatus, string> = {
+  pending: "À contrôler",
+  clear: "Rien à signaler",
+  observed: "Observation ajoutée",
+  inaccessible: "Non accessible",
+};
 
 function formatTime(value: string) {
+  return new Intl.DateTimeFormat("fr-FR", { hour: "2-digit", minute: "2-digit" }).format(new Date(value));
+}
+
+function formatVisitDate(value: string) {
   return new Intl.DateTimeFormat("fr-FR", {
-    hour: "2-digit",
-    minute: "2-digit",
+    weekday: "long",
+    day: "numeric",
+    month: "long",
   }).format(new Date(value));
 }
 
@@ -53,22 +74,51 @@ function isStandalone() {
   return window.matchMedia("(display-mode: standalone)").matches || navigatorWithStandalone.standalone === true;
 }
 
-function withPreviewUrl(capture: VistaCapture): CaptureView {
-  return capture.blob ? { ...capture, previewUrl: URL.createObjectURL(capture.blob) } : capture;
+function mediaWithPreview(media: VistaMedia): MediaView {
+  return { ...media, previewUrl: URL.createObjectURL(media.blob) };
+}
+
+function observationWithPreviews(observation: VistaObservation): ObservationView {
+  return {
+    ...observation,
+    audio: observation.audio ? mediaWithPreview(observation.audio) : undefined,
+    photos: observation.photos.map(mediaWithPreview),
+  };
+}
+
+function storedMedia(media: MediaView): VistaMedia {
+  return {
+    id: media.id,
+    blob: media.blob,
+    mimeType: media.mimeType,
+    fileName: media.fileName,
+    createdAt: media.createdAt,
+  };
+}
+
+function revokeObservationUrls(observations: ObservationView[]) {
+  observations.forEach((observation) => {
+    if (observation.audio) URL.revokeObjectURL(observation.audio.previewUrl);
+    observation.photos.forEach((photo) => URL.revokeObjectURL(photo.previewUrl));
+  });
 }
 
 export default function VistaApp() {
   const [screen, setScreen] = useState<Screen>("home");
   const [online, setOnline] = useState(() => typeof navigator === "undefined" ? true : navigator.onLine);
-  const [captures, setCaptures] = useState<CaptureView[]>([]);
+  const [visit, setVisit] = useState<VistaVisit | null>(null);
+  const [zoneProgress, setZoneProgress] = useState<VistaZoneProgress[]>([]);
+  const [observations, setObservations] = useState<ObservationView[]>([]);
   const [zoneIndex, setZoneIndex] = useState(0);
   const [draft, setDraft] = useState("");
+  const [draftAudio, setDraftAudio] = useState<MediaView | null>(null);
+  const [draftPhotos, setDraftPhotos] = useState<MediaView[]>([]);
   const [recording, setRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [saving, setSaving] = useState(false);
   const [installPrompt, setInstallPrompt] = useState<InstallPrompt | null>(null);
   const [showInstallHelp, setShowInstallHelp] = useState(false);
   const [installed, setInstalled] = useState(() => typeof window !== "undefined" && isStandalone());
-  const [storageReady, setStorageReady] = useState(false);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const recorderStreamRef = useRef<MediaStream | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -76,18 +126,17 @@ export default function VistaApp() {
   const libraryRef = useRef<HTMLInputElement | null>(null);
 
   const currentZone = ZONES[zoneIndex];
-  const currentZoneCaptures = useMemo(
-    () => captures.filter((capture) => capture.zoneId === currentZone.id),
-    [captures, currentZone.id],
+  const currentZoneProgress = zoneProgress.find((zone) => zone.zoneId === currentZone.id);
+  const currentZoneObservations = useMemo(
+    () => observations.filter((observation) => observation.zoneId === currentZone.id),
+    [observations, currentZone.id],
   );
-  const pendingCount = captures.filter((capture) => capture.syncStatus === "local").length;
+  const completedZoneCount = zoneProgress.filter((zone) => zone.status !== "pending").length;
+  const pendingSyncCount = observations.filter((observation) => observation.syncStatus === "local").length;
+  const hasDraft = Boolean(draft.trim() || draftAudio || draftPhotos.length);
+  const storageReady = Boolean(visit && zoneProgress.length === ZONES.length);
 
   useEffect(() => {
-    const savedZone = Number(localStorage.getItem(VISIT_KEY) ?? "0");
-    if (Number.isInteger(savedZone) && savedZone >= 0 && savedZone < ZONES.length) {
-      queueMicrotask(() => setZoneIndex(savedZone));
-    }
-
     const onOnline = () => setOnline(true);
     const onOffline = () => setOnline(false);
     const onInstallPrompt = (event: Event) => {
@@ -102,12 +151,15 @@ export default function VistaApp() {
       navigator.serviceWorker.register("/sw.js").catch(() => undefined);
     }
 
-    listCaptures()
-      .then((savedCaptures) => {
-        setCaptures(savedCaptures.map(withPreviewUrl));
-        setStorageReady(true);
+    loadFieldState(ZONES)
+      .then((state) => {
+        setVisit(state.visit);
+        setZoneProgress(state.zones);
+        setObservations(state.observations.map(observationWithPreviews));
+        const savedIndex = ZONES.findIndex((zone) => zone.id === state.visit.currentZoneId);
+        setZoneIndex(savedIndex >= 0 ? savedIndex : 0);
       })
-      .catch(() => setStorageReady(true));
+      .catch(() => window.alert("Le stockage local de VISTA n’a pas pu être initialisé."));
 
     return () => {
       window.removeEventListener("online", onOnline);
@@ -122,24 +174,65 @@ export default function VistaApp() {
     return () => window.clearInterval(timer);
   }, [recording]);
 
-  async function addCapture(capture: VistaCapture) {
-    await saveCapture(capture);
-    setCaptures((items) => [...items, withPreviewUrl(capture)]);
+  async function updateVisit(values: Partial<VistaVisit>) {
+    if (!visit) return;
+    const nextVisit = { ...visit, ...values, updatedAt: new Date().toISOString() };
+    setVisit(nextVisit);
+    await saveVisit(nextVisit);
   }
 
-  async function submitText() {
-    const text = draft.trim();
-    if (!text) return;
-    await addCapture({
+  async function updateZoneStatus(status: ZoneStatus) {
+    if (!currentZoneProgress) return;
+    if (currentZoneObservations.length > 0 && status !== "observed") {
+      window.alert("Cette zone contient déjà une observation. Son statut reste « Observation ajoutée ».");
+      return;
+    }
+    const updated = { ...currentZoneProgress, status, updatedAt: new Date().toISOString() };
+    setZoneProgress((zones) => zones.map((zone) => zone.id === updated.id ? updated : zone));
+    await saveZoneProgress(updated);
+  }
+
+  async function startVisit() {
+    if (!visit) return;
+    if (visit.status === "completed") {
+      setScreen("review");
+      return;
+    }
+    if (visit.status === "planned") await updateVisit({ status: "in_progress" });
+    setScreen("visit");
+  }
+
+  async function submitObservation() {
+    if (!visit || !hasDraft || saving || recording) return;
+    setSaving(true);
+    const now = new Date().toISOString();
+    const observation: VistaObservation = {
       id: crypto.randomUUID(),
-      kind: "text",
+      visitId: visit.id,
       zoneId: currentZone.id,
       zoneLabel: currentZone.label,
-      createdAt: new Date().toISOString(),
-      text,
+      createdAt: now,
+      updatedAt: now,
+      text: draft.trim() || undefined,
+      audio: draftAudio ? storedMedia(draftAudio) : undefined,
+      photos: draftPhotos.map(storedMedia),
       syncStatus: "local",
-    });
-    setDraft("");
+    };
+
+    try {
+      await saveObservation(observation);
+      setObservations((items) => [...items, {
+        ...observation,
+        audio: draftAudio ?? undefined,
+        photos: draftPhotos,
+      }]);
+      setDraft("");
+      setDraftAudio(null);
+      setDraftPhotos([]);
+      await updateZoneStatus("observed");
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function toggleRecording() {
@@ -157,22 +250,23 @@ export default function VistaApp() {
       recorder.ondataavailable = (event) => {
         if (event.data.size > 0) audioChunksRef.current.push(event.data);
       };
-      recorder.onstop = async () => {
+      recorder.onstop = () => {
+        const createdAt = new Date().toISOString();
         const mimeType = recorder.mimeType || "audio/webm";
         const blob = new Blob(audioChunksRef.current, { type: mimeType });
         recorderStreamRef.current?.getTracks().forEach((track) => track.stop());
         setRecording(false);
         setRecordingSeconds(0);
-        await addCapture({
-          id: crypto.randomUUID(),
-          kind: "audio",
-          zoneId: currentZone.id,
-          zoneLabel: currentZone.label,
-          createdAt: new Date().toISOString(),
-          blob,
-          mimeType,
-          fileName: `note-${Date.now()}.webm`,
-          syncStatus: "local",
+        setDraftAudio((previous) => {
+          if (previous) URL.revokeObjectURL(previous.previewUrl);
+          return {
+            id: crypto.randomUUID(),
+            blob,
+            mimeType,
+            fileName: `note-${Date.now()}.webm`,
+            createdAt,
+            previewUrl: URL.createObjectURL(blob),
+          };
         });
       };
       recorder.start();
@@ -183,27 +277,76 @@ export default function VistaApp() {
     }
   }
 
-  async function importPhoto(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
+  function importPhotos(event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? []);
     event.target.value = "";
-    if (!file) return;
-    await addCapture({
+    if (files.length === 0) return;
+    const imported = files.map((file): MediaView => ({
       id: crypto.randomUUID(),
-      kind: "photo",
-      zoneId: currentZone.id,
-      zoneLabel: currentZone.label,
-      createdAt: new Date().toISOString(),
       blob: file,
       mimeType: file.type,
       fileName: file.name,
-      syncStatus: "local",
+      createdAt: new Date().toISOString(),
+      previewUrl: URL.createObjectURL(file),
+    }));
+    setDraftPhotos((photos) => [...photos, ...imported]);
+  }
+
+  function removeDraftAudio() {
+    if (draftAudio) URL.revokeObjectURL(draftAudio.previewUrl);
+    setDraftAudio(null);
+  }
+
+  function removeDraftPhoto(id: string) {
+    setDraftPhotos((photos) => {
+      const removed = photos.find((photo) => photo.id === id);
+      if (removed) URL.revokeObjectURL(removed.previewUrl);
+      return photos.filter((photo) => photo.id !== id);
     });
   }
 
-  function moveToZone(nextIndex: number) {
+  function canLeaveZone() {
+    if (recording || hasDraft) {
+      window.alert("Enregistrez l’observation en cours avant de changer de zone.");
+      return false;
+    }
+    return true;
+  }
+
+  async function moveToZone(nextIndex: number) {
+    if (!visit || !canLeaveZone()) return;
     const bounded = Math.max(0, Math.min(nextIndex, ZONES.length - 1));
     setZoneIndex(bounded);
-    localStorage.setItem(VISIT_KEY, String(bounded));
+    await updateVisit({ currentZoneId: ZONES[bounded].id, status: "in_progress" });
+  }
+
+  async function advanceZone() {
+    if (!currentZoneProgress || !canLeaveZone()) return;
+    if (currentZoneProgress.status === "pending") {
+      window.alert("Indiquez « Rien à signaler », ajoutez une observation ou marquez la zone non accessible.");
+      return;
+    }
+    if (zoneIndex === ZONES.length - 1) {
+      setScreen("review");
+      return;
+    }
+    await moveToZone(zoneIndex + 1);
+  }
+
+  async function openZoneFromReview(index: number) {
+    setScreen("visit");
+    await moveToZone(index);
+  }
+
+  async function closeVisit() {
+    if (!visit) return;
+    const missing = zoneProgress.filter((zone) => zone.status === "pending");
+    if (missing.length > 0) {
+      window.alert(`${missing.length} zone${missing.length > 1 ? "s restent" : " reste"} à contrôler.`);
+      return;
+    }
+    const now = new Date().toISOString();
+    await updateVisit({ status: "completed", completedAt: now });
   }
 
   async function installVista() {
@@ -218,11 +361,18 @@ export default function VistaApp() {
   }
 
   async function resetDemo() {
-    if (!window.confirm("Effacer les observations locales de cette visite ?")) return;
-    captures.forEach((capture) => capture.previewUrl && URL.revokeObjectURL(capture.previewUrl));
-    await clearCaptures();
-    setCaptures([]);
-    moveToZone(0);
+    if (!window.confirm("Effacer cette visite locale et toutes ses observations ?")) return;
+    revokeObservationUrls(observations);
+    if (draftAudio) URL.revokeObjectURL(draftAudio.previewUrl);
+    draftPhotos.forEach((photo) => URL.revokeObjectURL(photo.previewUrl));
+    const state = await resetFieldState(ZONES);
+    setVisit(state.visit);
+    setZoneProgress(state.zones);
+    setObservations([]);
+    setDraft("");
+    setDraftAudio(null);
+    setDraftPhotos([]);
+    setZoneIndex(0);
     setScreen("home");
   }
 
@@ -232,23 +382,39 @@ export default function VistaApp() {
 
       {screen === "visit" ? (
         <VisitScreen
-          captures={currentZoneCaptures}
+          observations={currentZoneObservations}
           currentZone={currentZone}
+          zoneStatus={currentZoneProgress?.status ?? "pending"}
           draft={draft}
+          draftAudio={draftAudio}
+          draftPhotos={draftPhotos}
           onDraftChange={setDraft}
-          onSubmitText={submitText}
+          onSave={submitObservation}
           onToggleRecording={toggleRecording}
+          onRemoveAudio={removeDraftAudio}
+          onRemovePhoto={removeDraftPhoto}
+          onStatusChange={updateZoneStatus}
           recording={recording}
           recordingSeconds={recordingSeconds}
+          saving={saving}
           zoneIndex={zoneIndex}
-          onBack={() => setScreen("home")}
+          completedZoneCount={completedZoneCount}
+          onBack={() => canLeaveZone() && setScreen("home")}
           onPrevious={() => moveToZone(zoneIndex - 1)}
-          onNext={() => zoneIndex === ZONES.length - 1 ? setScreen("review") : moveToZone(zoneIndex + 1)}
+          onNext={advanceZone}
           onCamera={() => cameraRef.current?.click()}
           onLibrary={() => libraryRef.current?.click()}
         />
-      ) : screen === "review" ? (
-        <ReviewScreen captures={captures} onBack={() => setScreen("visit")} onReset={resetDemo} />
+      ) : screen === "review" && visit ? (
+        <ReviewScreen
+          visit={visit}
+          zones={zoneProgress}
+          observations={observations}
+          onBack={() => setScreen("visit")}
+          onOpenZone={openZoneFromReview}
+          onCloseVisit={closeVisit}
+          onReset={resetDemo}
+        />
       ) : (
         <>
           <AppHeader online={online} />
@@ -256,25 +422,26 @@ export default function VistaApp() {
             <HomeScreen
               installed={installed}
               storageReady={storageReady}
-              captures={captures}
-              zoneIndex={zoneIndex}
-              pendingCount={pendingCount}
+              visit={visit}
+              observationCount={observations.length}
+              completedZoneCount={completedZoneCount}
+              pendingSyncCount={pendingSyncCount}
               onInstall={installVista}
-              onStart={() => setScreen("visit")}
+              onStart={startVisit}
             />
           )}
-          {screen === "visits" && <VisitsScreen captures={captures} onResume={() => setScreen("visit")} />}
+          {screen === "visits" && visit && (
+            <VisitsScreen visit={visit} observationCount={observations.length} onResume={startVisit} />
+          )}
           {screen === "actions" && <ActionsScreen />}
           <BottomNav screen={screen} onChange={setScreen} />
         </>
       )}
 
-      <input ref={cameraRef} className="visually-hidden" type="file" accept="image/*" capture="environment" onChange={importPhoto} />
-      <input ref={libraryRef} className="visually-hidden" type="file" accept="image/*" onChange={importPhoto} />
+      <input ref={cameraRef} className="visually-hidden" type="file" accept="image/*" capture="environment" onChange={importPhotos} />
+      <input ref={libraryRef} className="visually-hidden" type="file" accept="image/*" multiple onChange={importPhotos} />
 
-      {showInstallHelp && (
-        <InstallSheet ios={isIosDevice()} onClose={() => setShowInstallHelp(false)} />
-      )}
+      {showInstallHelp && <InstallSheet ios={isIosDevice()} onClose={() => setShowInstallHelp(false)} />}
     </main>
   );
 }
@@ -291,27 +458,33 @@ function AppHeader({ online }: { online: boolean }) {
 function HomeScreen({
   installed,
   storageReady,
-  captures,
-  zoneIndex,
-  pendingCount,
+  visit,
+  observationCount,
+  completedZoneCount,
+  pendingSyncCount,
   onInstall,
   onStart,
 }: {
   installed: boolean;
   storageReady: boolean;
-  captures: CaptureView[];
-  zoneIndex: number;
-  pendingCount: number;
+  visit: VistaVisit | null;
+  observationCount: number;
+  completedZoneCount: number;
+  pendingSyncCount: number;
   onInstall: () => void;
   onStart: () => void;
 }) {
-  const hasStarted = captures.length > 0 || zoneIndex > 0;
+  const progress = Math.round((completedZoneCount / ZONES.length) * 100);
+  const buttonLabel = visit?.status === "completed"
+    ? "Consulter la visite"
+    : visit?.status === "in_progress" ? "Reprendre la visite" : "Commencer la visite";
+
   return (
     <>
       <section className="welcome-block">
-        <p className="eyebrow">Mardi 30 septembre</p>
+        <p className="eyebrow">{visit ? formatVisitDate(visit.scheduledAt) : "Chargement"}</p>
         <h1>Bonjour Nicolas</h1>
-        <p>Votre prochaine visite est prête.</p>
+        <p>{visit?.status === "completed" ? "Votre visite est clôturée." : "Votre prochaine visite est prête."}</p>
       </section>
 
       {!installed && (
@@ -325,18 +498,18 @@ function HomeScreen({
       <section className="visit-card">
         <div className="visit-card-topline">
           <span className="visit-tag">À 09:30</span>
-          <span className="visit-type">Visite technique</span>
+          <span className="visit-type">{visit?.status === "completed" ? "Visite clôturée" : "Visite technique"}</span>
         </div>
-        <h2>Résidence du Parc</h2>
-        <p>12 rue des Tilleuls · 75015 Paris</p>
-        <div className="visit-progress-line"><span style={{ width: `${Math.round((zoneIndex / ZONES.length) * 100)}%` }} /></div>
+        <h2>{visit?.propertyName ?? "Résidence du Parc"}</h2>
+        <p>{visit?.address ?? "12 rue des Tilleuls · 75015 Paris"}</p>
+        <div className="visit-progress-line"><span style={{ width: `${progress}%` }} /></div>
         <div className="visit-stats">
-          <span><strong>{ZONES.length}</strong> zones</span>
-          <span><strong>{captures.length}</strong> observation{captures.length > 1 ? "s" : ""}</span>
-          {pendingCount > 0 && <span className="pending-copy">{pendingCount} locale{pendingCount > 1 ? "s" : ""}</span>}
+          <span><strong>{completedZoneCount}/{ZONES.length}</strong> zones</span>
+          <span><strong>{observationCount}</strong> observation{observationCount > 1 ? "s" : ""}</span>
+          {pendingSyncCount > 0 && <span className="pending-copy">Stockage local</span>}
         </div>
         <button type="button" className="primary-action" onClick={onStart} disabled={!storageReady}>
-          {hasStarted ? "Reprendre la visite" : "Commencer la visite"}<span>→</span>
+          {buttonLabel}<span>→</span>
         </button>
       </section>
 
@@ -349,37 +522,55 @@ function HomeScreen({
 }
 
 function VisitScreen({
-  captures,
+  observations,
   currentZone,
+  zoneStatus,
   draft,
+  draftAudio,
+  draftPhotos,
   onDraftChange,
-  onSubmitText,
+  onSave,
   onToggleRecording,
+  onRemoveAudio,
+  onRemovePhoto,
+  onStatusChange,
   recording,
   recordingSeconds,
+  saving,
   zoneIndex,
+  completedZoneCount,
   onBack,
   onPrevious,
   onNext,
   onCamera,
   onLibrary,
 }: {
-  captures: CaptureView[];
-  currentZone: (typeof ZONES)[number];
+  observations: ObservationView[];
+  currentZone: ZoneTemplate;
+  zoneStatus: ZoneStatus;
   draft: string;
+  draftAudio: MediaView | null;
+  draftPhotos: MediaView[];
   onDraftChange: (value: string) => void;
-  onSubmitText: () => void;
+  onSave: () => void;
   onToggleRecording: () => void;
+  onRemoveAudio: () => void;
+  onRemovePhoto: (id: string) => void;
+  onStatusChange: (status: ZoneStatus) => void;
   recording: boolean;
   recordingSeconds: number;
+  saving: boolean;
   zoneIndex: number;
+  completedZoneCount: number;
   onBack: () => void;
   onPrevious: () => void;
   onNext: () => void;
   onCamera: () => void;
   onLibrary: () => void;
 }) {
-  const percent = Math.round(((zoneIndex + 1) / ZONES.length) * 100);
+  const percent = Math.round((completedZoneCount / ZONES.length) * 100);
+  const canSave = Boolean(draft.trim() || draftAudio || draftPhotos.length);
+
   return (
     <section className="field-screen">
       <header className="field-header">
@@ -396,18 +587,23 @@ function VisitScreen({
         <p>{currentZone.hint}</p>
       </div>
 
+      <ZoneStatusPicker status={zoneStatus} hasObservations={observations.length > 0} onChange={onStatusChange} />
+
       <div className="capture-feed">
-        {captures.length === 0 ? (
+        {observations.length === 0 ? (
           <div className="empty-capture">
             <span>＋</span>
             <strong>Ajoutez ce que vous observez</strong>
-            <p>Écrivez, dictez ou prenez une photo. Chaque élément restera lié à cette zone.</p>
+            <p>Une observation peut réunir un texte, une note vocale et plusieurs photos.</p>
           </div>
-        ) : captures.map((capture) => <CaptureCard key={capture.id} capture={capture} />)}
+        ) : observations.map((observation) => <ObservationCard key={observation.id} observation={observation} />)}
       </div>
 
       <div className="composer-wrap">
-        {recording && <div className="recording-bar"><i /> Enregistrement {durationLabel(recordingSeconds)} <span>Appuyez pour terminer</span></div>}
+        {recording && <div className="recording-bar"><i /> Enregistrement {durationLabel(recordingSeconds)} <span>Appuyez sur le micro pour terminer</span></div>}
+        {(draftAudio || draftPhotos.length > 0) && (
+          <DraftAttachments audio={draftAudio} photos={draftPhotos} onRemoveAudio={onRemoveAudio} onRemovePhoto={onRemovePhoto} />
+        )}
         <div className="composer">
           <textarea
             value={draft}
@@ -417,70 +613,132 @@ function VisitScreen({
             aria-label="Observation écrite"
           />
           <button type="button" className="composer-tool" onClick={onCamera} aria-label="Prendre une photo">⌾</button>
-          <button type="button" className="composer-tool" onClick={onLibrary} aria-label="Choisir une photo">▧</button>
-          {draft.trim() ? (
-            <button type="button" className="send-button" onClick={onSubmitText} aria-label="Ajouter l’observation">↑</button>
-          ) : (
-            <button type="button" className={`mic-button ${recording ? "recording" : ""}`} onClick={onToggleRecording} aria-label={recording ? "Arrêter l’enregistrement" : "Enregistrer une note vocale"}>●</button>
-          )}
+          <button type="button" className="composer-tool" onClick={onLibrary} aria-label="Choisir des photos">▧</button>
+          <button type="button" className={`mic-button ${recording ? "recording" : ""}`} onClick={onToggleRecording} aria-label={recording ? "Arrêter l’enregistrement" : "Ajouter une note vocale"}>●</button>
+          <button type="button" className="send-button" onClick={onSave} disabled={!canSave || saving || recording} aria-label="Enregistrer l’observation">↑</button>
         </div>
         <div className="zone-navigation">
           <button type="button" onClick={onPrevious} disabled={zoneIndex === 0}>← Zone précédente</button>
-          <button type="button" className="next-zone" onClick={onNext}>{zoneIndex === ZONES.length - 1 ? "Terminer la visite" : "Valider et continuer"} →</button>
+          <button type="button" className="next-zone" onClick={onNext}>{zoneIndex === ZONES.length - 1 ? "Vérifier la visite" : "Valider et continuer"} →</button>
         </div>
       </div>
     </section>
   );
 }
 
-function CaptureCard({ capture }: { capture: CaptureView }) {
+function ZoneStatusPicker({ status, hasObservations, onChange }: { status: ZoneStatus; hasObservations: boolean; onChange: (status: ZoneStatus) => void }) {
   return (
-    <article className={`capture-card capture-${capture.kind}`}>
-      <div className="capture-meta"><span>{capture.kind === "text" ? "Note" : capture.kind === "audio" ? "Note vocale" : "Photo"}</span><time>{formatTime(capture.createdAt)}</time></div>
-      {capture.kind === "text" && <p>{capture.text}</p>}
-      {capture.kind === "audio" && capture.previewUrl && (
-        // Les notes vocales seront transcrites lors de la connexion du moteur IA.
+    <section className="zone-status-card">
+      <div><span>Statut de la zone</span><strong className={`zone-status status-${status}`}>{STATUS_LABELS[status]}</strong></div>
+      <div className="zone-status-actions">
+        <button type="button" className={status === "clear" ? "active" : ""} disabled={hasObservations} onClick={() => onChange("clear")}>✓ Rien à signaler</button>
+        <button type="button" className={status === "inaccessible" ? "active" : ""} disabled={hasObservations} onClick={() => onChange("inaccessible")}>⊘ Non accessible</button>
+      </div>
+    </section>
+  );
+}
+
+function DraftAttachments({ audio, photos, onRemoveAudio, onRemovePhoto }: { audio: MediaView | null; photos: MediaView[]; onRemoveAudio: () => void; onRemovePhoto: (id: string) => void }) {
+  return (
+    <div className="draft-attachments">
+      {audio && (
+        <div className="draft-audio">
+          <span>● Note vocale prête</span>
+          <button type="button" onClick={onRemoveAudio} aria-label="Retirer la note vocale">×</button>
+        </div>
+      )}
+      {photos.length > 0 && (
+        <div className="draft-photos">
+          {photos.map((photo) => (
+            <div key={photo.id}>
+              <img src={photo.previewUrl} alt="Pièce jointe à l’observation" />
+              <button type="button" onClick={() => onRemovePhoto(photo.id)} aria-label="Retirer la photo">×</button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ObservationCard({ observation }: { observation: ObservationView }) {
+  const parts = [observation.text ? "Texte" : "", observation.audio ? "Voix" : "", observation.photos.length ? `${observation.photos.length} photo${observation.photos.length > 1 ? "s" : ""}` : ""].filter(Boolean);
+  return (
+    <article className="capture-card observation-card">
+      <div className="capture-meta"><span>{parts.join(" · ")}</span><time>{formatTime(observation.createdAt)}</time></div>
+      {observation.text && <p>{observation.text}</p>}
+      {observation.audio && (
+        // La transcription sera ajoutée après la synchronisation backend.
         // eslint-disable-next-line jsx-a11y/media-has-caption
-        <audio src={capture.previewUrl} controls preload="metadata" />
+        <audio src={observation.audio.previewUrl} controls preload="metadata" />
       )}
-      {capture.kind === "photo" && capture.previewUrl && (
-        // Les URL Blob locales ne peuvent pas passer par l’optimiseur d’images serveur.
-        <img src={capture.previewUrl} alt={`Observation — ${capture.zoneLabel}`} />
+      {observation.photos.length > 0 && (
+        <div className="observation-photos">
+          {observation.photos.map((photo) => <img key={photo.id} src={photo.previewUrl} alt={`Observation — ${observation.zoneLabel}`} />)}
+        </div>
       )}
-      <span className="local-state">{capture.syncStatus === "local" ? "Conservé sur l’appareil" : "Synchronisé"}</span>
+      <span className="local-state">{observation.syncStatus === "local" ? "Conservé sur l’appareil" : "Synchronisé"}</span>
     </article>
   );
 }
 
-function ReviewScreen({ captures, onBack, onReset }: { captures: CaptureView[]; onBack: () => void; onReset: () => void }) {
-  const textCount = captures.filter((item) => item.kind === "text").length;
-  const audioCount = captures.filter((item) => item.kind === "audio").length;
-  const photoCount = captures.filter((item) => item.kind === "photo").length;
+function ReviewScreen({ visit, zones, observations, onBack, onOpenZone, onCloseVisit, onReset }: { visit: VistaVisit; zones: VistaZoneProgress[]; observations: ObservationView[]; onBack: () => void; onOpenZone: (index: number) => void; onCloseVisit: () => void; onReset: () => void }) {
+  const missingZones = zones.filter((zone) => zone.status === "pending");
+  const audioCount = observations.filter((item) => item.audio).length;
+  const photoCount = observations.reduce((total, item) => total + item.photos.length, 0);
+  const completed = visit.status === "completed";
+
   return (
     <section className="review-screen">
       <button type="button" className="text-button" onClick={onBack}>← Revenir à la visite</button>
-      <p className="eyebrow">Visite terminée</p>
-      <h1>Prêt pour le compte rendu</h1>
-      <p className="review-intro">Toutes les observations sont enregistrées localement. Elles pourront être synchronisées et structurées par l’IA dès que le backend sera connecté.</p>
+      <p className="eyebrow">Contrôle de fin de visite</p>
+      <h1>{completed ? "Visite clôturée" : missingZones.length ? "Quelques zones restent à vérifier" : "Tout est prêt"}</h1>
+      <p className="review-intro">
+        {completed
+          ? "La visite est enregistrée localement et prête pour la future synchronisation du compte rendu."
+          : missingZones.length
+            ? "VISTA bloque la clôture tant qu’une zone n’est pas contrôlée ou justifiée."
+            : "Toutes les zones sont renseignées. Vous pouvez clôturer la visite sans perdre les données locales."}
+      </p>
       <div className="review-grid">
-        <div><strong>{textCount}</strong><span>notes écrites</span></div>
+        <div><strong>{zones.length - missingZones.length}/{zones.length}</strong><span>zones renseignées</span></div>
+        <div><strong>{observations.length}</strong><span>observations</span></div>
         <div><strong>{audioCount}</strong><span>notes vocales</span></div>
         <div><strong>{photoCount}</strong><span>photos</span></div>
       </div>
-      <button type="button" className="primary-action" onClick={() => window.alert("La génération IA et le PDF constituent la prochaine étape de développement.")}>Préparer le compte rendu <span>→</span></button>
+
+      <div className="zone-review-list">
+        {zones.map((zone) => (
+          <button type="button" key={zone.id} onClick={() => onOpenZone(zone.order)}>
+            <span className={`zone-dot status-${zone.status}`} />
+            <span><strong>{zone.zoneLabel}</strong><small>{STATUS_LABELS[zone.status]}</small></span>
+            <b>→</b>
+          </button>
+        ))}
+      </div>
+
+      {!completed ? (
+        <button type="button" className="primary-action review-primary" onClick={onCloseVisit} disabled={missingZones.length > 0}>
+          Clôturer la visite <span>✓</span>
+        </button>
+      ) : (
+        <button type="button" className="primary-action review-primary" onClick={() => window.alert("La synchronisation, l’IA et le PDF constituent le prochain lot de développement.")}>
+          Préparer le compte rendu <span>→</span>
+        </button>
+      )}
       <button type="button" className="danger-link" onClick={onReset}>Réinitialiser cette démonstration</button>
     </section>
   );
 }
 
-function VisitsScreen({ captures, onResume }: { captures: CaptureView[]; onResume: () => void }) {
+function VisitsScreen({ visit, observationCount, onResume }: { visit: VistaVisit; observationCount: number; onResume: () => void }) {
   return (
     <section className="secondary-screen">
       <p className="eyebrow">Planning</p>
       <h1>Mes visites</h1>
       <button type="button" className="list-card" onClick={onResume}>
         <span className="date-tile"><strong>30</strong>SEP</span>
-        <span><strong>Résidence du Parc</strong><small>09:30 · {captures.length} observation{captures.length > 1 ? "s" : ""}</small></span>
+        <span><strong>{visit.propertyName}</strong><small>09:30 · {observationCount} observation{observationCount > 1 ? "s" : ""} · {visit.status === "completed" ? "Clôturée" : "En cours"}</small></span>
         <b>→</b>
       </button>
     </section>

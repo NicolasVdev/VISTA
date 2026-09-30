@@ -53,14 +53,14 @@ Livrable : utilisateur authentifié capable de créer une copropriété, son par
 - [x] Permettre la sélection rapide du lieu courant.
 - [x] Ajouter une zone de saisie texte comparable à une messagerie mobile.
 - [x] Enregistrer plusieurs notes vocales courtes.
-- [ ] Permettre de combiner texte et note vocale dans une capture.
+- [x] Permettre de combiner texte et note vocale dans une capture.
 - [x] Prendre une photo depuis l'application sans ajout obligatoire à la photothèque.
 - [x] Sélectionner une photo existante dans la photothèque.
 - [x] Stocker durablement les captures dans IndexedDB avant synchronisation.
 - [ ] Transférer les médias avec progression, reprise et signalement d'erreur.
-- [ ] Garantir la reprise après fermeture ou redémarrage de l'application.
-- [ ] Marquer les zones comme visitées, sans observation, non accessibles ou restantes.
-- [ ] Ajouter la clôture avec contrôle des oublis.
+- [x] Garantir la reprise après fermeture ou redémarrage de l'application.
+- [x] Marquer les zones comme visitées, sans observation, non accessibles ou restantes.
+- [x] Ajouter la clôture avec contrôle des oublis.
 
 Livrable : visite complète réalisable sur téléphone, même si l'analyse IA n'est pas encore branchée.
 

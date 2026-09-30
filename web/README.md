@@ -7,12 +7,15 @@ Application terrain installable de visites techniques d'immeubles.
 - installation sur l'écran d'accueil avec icône VISTA ;
 - affichage autonome et responsive ;
 - parcours de visite de la toiture au sous-sol ;
-- observations écrites ;
+- observations regroupant texte, note vocale et plusieurs photos ;
 - plusieurs notes vocales courtes ;
-- prise de photo ou import depuis la photothèque ;
+- prise de photo ou import multiple depuis la photothèque ;
 - conservation locale dans IndexedDB ;
+- statut obligatoire pour chaque zone : observation, rien à signaler ou non accessible ;
+- reprise de la visite après fermeture de l'application ;
 - cache applicatif hors connexion ;
-- écran de clôture préparant la future génération du compte rendu.
+- clôture impossible tant qu'une zone reste à contrôler ;
+- écran de synthèse préparant la future génération du compte rendu.
 
 La synchronisation serveur, l'authentification, la transcription IA et le PDF ne sont pas encore connectés.
 

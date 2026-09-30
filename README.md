@@ -55,5 +55,7 @@ Le premier prototype Expo/React Native reste archivé dans [`mobile/`](mobile/RE
 - Premier prototype mobile réalisé avec Expo, puis abandonné comme cible principale.
 - Pivot vers une PWA installable validé et implémenté.
 - Parcours terrain, texte, voix, photos et brouillons locaux hors connexion disponibles dans la PWA.
+- Visite, progression par zone et observations multimédias regroupées persistées dans IndexedDB.
+- Reprise après fermeture et clôture bloquée tant qu'une zone n'est pas renseignée.
 - Migration vers une PWA statique portable et configuration Render réalisées.
 - Prochaine étape : connecter l'authentification, le backend de synchronisation et le stockage privé des médias.
