@@ -1,5 +1,18 @@
 # Registre des décisions
 
+## 2026-09-30 — PWA installable comme client principal
+
+Décision : VISTA est développé comme une Progressive Web App mobile-first installable sur l'écran d'accueil.
+
+Conséquences :
+
+- le gestionnaire lance VISTA depuis une icône, sans rechercher un lien à chaque visite ;
+- l'application s'ouvre en mode autonome et reste responsive sur téléphone, tablette et ordinateur ;
+- le texte, les notes vocales et les photos sont conservés localement avant synchronisation ;
+- la diffusion initiale ne dépend ni de l'App Store, ni de Google Play, ni d'Expo Go ;
+- un assistant accompagne l'installation sur iPhone et Android ;
+- une encapsulation native pourra être envisagée plus tard sans reconstruire le modèle métier.
+
 ## 2026-09-24 — Captation vocale
 
 Décision : le MVP utilise plusieurs notes vocales courtes pendant la visite.
@@ -78,6 +91,5 @@ Une photo prise dans l'application n'a pas besoin d'être ajoutée automatiqueme
 
 ## Décisions encore ouvertes
 
-- Pile technique, hébergement et fournisseur d'authentification.
-- Validation ou rejet de l'option React Native avec Expo après une preuve de concept terrain.
+- Hébergement de production, backend de synchronisation et fournisseur d'authentification.
 - Périmètre des données à reprendre depuis le prototype Notion.

@@ -1,7 +1,7 @@
 # Architecture fonctionnelle du MVP
 
-Date : 2026-09-24  
-Statut : proposition technique à valider
+Date : 2026-09-30
+Statut : architecture PWA validée, backend à connecter
 
 ## 1. Architecture générale
 
@@ -23,9 +23,9 @@ Application mobile-first
 
 ## 2. Application terrain
 
-Une application mobile multiplateforme constitue désormais l'option privilégiée pour le client terrain. Une piste de mise en œuvre est React Native avec Expo, sous réserve d'une preuve de concept sur les téléphones réellement utilisés.
+Le client terrain principal est une PWA responsive et installable. Une fois ajoutée à l'écran d'accueil, elle s'ouvre en mode autonome depuis une icône VISTA, sans passage par un catalogue d'applications.
 
-Motif : l'enregistrement audio via navigateur est largement disponible, mais la synchronisation web en arrière-plan reste d'une disponibilité limitée. Une application terrain doit pouvoir conserver les médias localement, reprendre leur transfert et mieux contrôler le comportement du micro lorsque le réseau ou l'état du téléphone change.
+Les captures sont écrites immédiatement dans IndexedDB. Elles constituent une file locale de brouillons jusqu'à confirmation de leur réception par le futur backend. La synchronisation se produit lorsque l'application est ouverte et retrouve le réseau ; elle ne doit pas dépendre d'une exécution prolongée en arrière-plan.
 
 Fonctions essentielles :
 
@@ -41,7 +41,7 @@ Fonctions essentielles :
 - reprise d'un transfert interrompu ;
 - validation des constats, du compte rendu et des tâches.
 
-Une PWA peut rester utile pour l'administration sur ordinateur, mais elle ne doit pas être retenue comme client terrain principal avant validation des scénarios de réseau faible, verrouillage d'écran et reprise de transfert.
+La même application sert au terrain et à la relecture au bureau. Les écrans s'adaptent au téléphone, à la tablette et à l'ordinateur.
 
 ### Preuve de concept obligatoire
 
@@ -171,7 +171,7 @@ L'import Notion doit être un chantier isolé afin de ne pas imposer la structur
 
 - [MediaRecorder — MDN](https://developer.mozilla.org/en-US/docs/Web/API/MediaRecorder) : enregistrement web largement disponible, avec variations possibles selon les fonctions et formats.
 - [Background Synchronization API — MDN](https://developer.mozilla.org/en-US/docs/Web/API/Background_Synchronization_API) : disponibilité limitée selon les navigateurs.
-- [Expo Audio](https://docs.expo.dev/versions/latest/sdk/audio/) : API multiplateforme d'enregistrement audio, avec capacités natives iOS et Android.
-- [Expo FileSystem](https://docs.expo.dev/versions/latest/sdk/filesystem/) : conservation locale et téléversement de fichiers avec suivi de progression.
+- [Web App Manifest — MDN](https://developer.mozilla.org/docs/Web/Progressive_web_apps/Manifest) : installation et comportement autonome de la PWA.
+- [IndexedDB — MDN](https://developer.mozilla.org/docs/Web/API/IndexedDB_API) : conservation locale structurée des brouillons et médias.
 - [CSS Paged Media — W3C](https://www.w3.org/TR/css-page-3/) : modèle de mise en page paginée pour l'impression et la production de documents.
 - [ISO 19005-2 — PDF/A-2](https://www.iso.org/standard/50655.html) : préservation à long terme de la représentation visuelle statique des documents.

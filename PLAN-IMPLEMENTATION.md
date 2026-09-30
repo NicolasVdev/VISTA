@@ -25,7 +25,8 @@ Construire et tester sur une copropriété pilote une application autonome couvr
 - [x] Choisir le format du compte rendu : PDF versionné.
 - [x] Choisir le mode de diffusion : téléchargement du PDF, puis envoi depuis la messagerie habituelle.
 - [x] Définir le comportement réseau : capture hors connexion et synchronisation différée obligatoire.
-- [ ] Choisir la pile applicative et l'hébergement.
+- [x] Choisir la pile applicative : PWA React/TypeScript installable.
+- [ ] Choisir l'hébergement de production et le backend.
 - [ ] Définir les données à migrer depuis Notion.
 
 Livrable : dossier de décisions techniques validé.
@@ -34,7 +35,7 @@ Livrable : dossier de décisions techniques validé.
 
 ### Tâches
 
-- [ ] Initialiser le dépôt et les environnements de développement.
+- [x] Initialiser le dépôt et l'application PWA.
 - [ ] Mettre en place l'authentification et la séparation par organisation.
 - [ ] Créer le schéma relationnel initial.
 - [ ] Mettre en place le stockage privé des audios, photos et documents.
@@ -47,14 +48,14 @@ Livrable : utilisateur authentifié capable de créer une copropriété, son par
 
 ### Tâches
 
-- [ ] Afficher le parcours ordonné de haut en bas.
-- [ ] Permettre la sélection rapide du lieu courant.
-- [ ] Ajouter une zone de saisie texte comparable à une messagerie mobile.
-- [ ] Enregistrer plusieurs notes vocales courtes.
+- [x] Afficher le parcours ordonné de haut en bas.
+- [x] Permettre la sélection rapide du lieu courant.
+- [x] Ajouter une zone de saisie texte comparable à une messagerie mobile.
+- [x] Enregistrer plusieurs notes vocales courtes.
 - [ ] Permettre de combiner texte et note vocale dans une capture.
-- [ ] Prendre plusieurs photos sans ajout obligatoire à la photothèque.
-- [ ] Sélectionner plusieurs photos existantes dans la photothèque.
-- [ ] Stocker durablement les captures sur le téléphone avant synchronisation.
+- [x] Prendre une photo depuis l'application sans ajout obligatoire à la photothèque.
+- [x] Sélectionner une photo existante dans la photothèque.
+- [x] Stocker durablement les captures dans IndexedDB avant synchronisation.
 - [ ] Transférer les médias avec progression, reprise et signalement d'erreur.
 - [ ] Garantir la reprise après fermeture ou redémarrage de l'application.
 - [ ] Marquer les zones comme visitées, sans observation, non accessibles ou restantes.
@@ -155,4 +156,4 @@ Cibles proposées à valider :
 
 ## Prochaine étape
 
-Choisir la pile technique du MVP, puis produire le schéma de base de données et la maquette interactive du parcours mobile avant d'écrire les intégrations IA.
+Connecter l'authentification et le backend de synchronisation, puis transférer les textes, audios et photos de la file locale vers un stockage privé avant d'intégrer la transcription IA.

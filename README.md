@@ -34,11 +34,13 @@ Le gestionnaire qui effectue la visite est également responsable de la validati
 - [Plan d'implémentation](PLAN-IMPLEMENTATION.md)
 - [Parcours mobile](PARCOURS-MOBILE.md)
 
-## Prototype mobile
+## Application active
 
-L'application Expo/React Native se trouve dans [`mobile/`](mobile/README.md).
+La PWA mobile-first et installable se trouve dans [`web/`](web/README.md). Elle est conçue pour être ajoutée à l'écran d'accueil d'un iPhone ou d'un téléphone Android et s'ouvrir comme une application autonome.
 
-## État au 2026-09-24
+Le premier prototype Expo/React Native reste archivé dans [`mobile/`](mobile/README.md) pour conserver l'historique technique, mais il n'est plus la cible active.
+
+## État au 2026-09-30
 
 - Parcours métier initial décrit.
 - Notes vocales courtes validées comme mode de captation du MVP.
@@ -48,5 +50,7 @@ L'application Expo/React Native se trouve dans [`mobile/`](mobile/README.md).
 - Mode visite hors connexion validé, avec synchronisation différée.
 - Saisie texte ou vocale et ajout de photos depuis l'appareil photo ou la photothèque validés.
 - Architecture fonctionnelle et plan de développement révisés.
-- Premier prototype mobile réalisé avec Expo, React Native et TypeScript.
-- Prochaine étape : connecter le backend, la transcription IA et la génération du PDF.
+- Premier prototype mobile réalisé avec Expo, puis abandonné comme cible principale.
+- Pivot vers une PWA installable validé et implémenté.
+- Parcours terrain, texte, voix, photos et brouillons locaux hors connexion disponibles dans la PWA.
+- Prochaine étape : connecter l'authentification, le backend de synchronisation et le stockage privé des médias.

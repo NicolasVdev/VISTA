@@ -1,5 +1,7 @@
 # VISTA Mobile
 
+> Prototype historique Expo/React Native. Le développement actif a été déplacé vers la PWA du dossier [`web/`](../web/README.md) le 30 septembre 2026.
+
 Prototype mobile Expo/React Native du mode visite VISTA.
 
 ## Fonctions présentes
