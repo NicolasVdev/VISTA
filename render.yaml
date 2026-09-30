@@ -2,7 +2,7 @@ services:
   - type: web
     name: vista-visites-syndic
     runtime: static
-    buildCommand: corepack enable && cd web && pnpm install --frozen-lockfile && pnpm build
+    buildCommand: cd web && pnpm install --frozen-lockfile && pnpm build
     staticPublishPath: web/dist
     previews:
       generation: automatic
