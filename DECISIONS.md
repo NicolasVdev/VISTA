@@ -91,5 +91,17 @@ Une photo prise dans l'application n'a pas besoin d'être ajoutée automatiqueme
 
 ## Décisions encore ouvertes
 
-- Hébergement de production, backend de synchronisation et fournisseur d'authentification.
+- Backend de synchronisation, stockage privé et fournisseur d'authentification de production.
 - Périmètre des données à reprendre depuis le prototype Notion.
+
+## 2026-09-30 — Hébergement Render pour le pilote
+
+Décision : la PWA pilote est construite comme un site statique React/Vite et publiée sur le compte Render déjà administré par l'entreprise.
+
+Conséquences :
+
+- aucun compte OpenAI n'est nécessaire pour ouvrir la version de test ;
+- Render sert uniquement les fichiers publics de l'application pendant le pilote ;
+- les données saisies restent locales à l'appareil tant que le backend n'est pas connecté ;
+- l'authentification métier devra être ajoutée avant toute synchronisation de données réelles ;
+- la PWA reste portable vers un autre hébergeur grâce à son build statique standard.

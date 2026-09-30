@@ -38,6 +38,8 @@ Le gestionnaire qui effectue la visite est également responsable de la validati
 
 La PWA mobile-first et installable se trouve dans [`web/`](web/README.md). Elle est conçue pour être ajoutée à l'écran d'accueil d'un iPhone ou d'un téléphone Android et s'ouvrir comme une application autonome.
 
+La version pilote est une application React/Vite statique, préparée pour être publiée sur le compte Render de l'entreprise à partir du dépôt GitHub. Elle ne dépend plus d'OpenAI Sites pour son accès.
+
 Le premier prototype Expo/React Native reste archivé dans [`mobile/`](mobile/README.md) pour conserver l'historique technique, mais il n'est plus la cible active.
 
 ## État au 2026-09-30
@@ -53,4 +55,5 @@ Le premier prototype Expo/React Native reste archivé dans [`mobile/`](mobile/RE
 - Premier prototype mobile réalisé avec Expo, puis abandonné comme cible principale.
 - Pivot vers une PWA installable validé et implémenté.
 - Parcours terrain, texte, voix, photos et brouillons locaux hors connexion disponibles dans la PWA.
+- Migration vers une PWA statique portable et configuration Render réalisées.
 - Prochaine étape : connecter l'authentification, le backend de synchronisation et le stockage privé des médias.

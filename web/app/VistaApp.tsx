@@ -445,7 +445,6 @@ function CaptureCard({ capture }: { capture: CaptureView }) {
       )}
       {capture.kind === "photo" && capture.previewUrl && (
         // Les URL Blob locales ne peuvent pas passer par l’optimiseur d’images serveur.
-        // eslint-disable-next-line @next/next/no-img-element
         <img src={capture.previewUrl} alt={`Observation — ${capture.zoneLabel}`} />
       )}
       <span className="local-state">{capture.syncStatus === "local" ? "Conservé sur l’appareil" : "Synchronisé"}</span>

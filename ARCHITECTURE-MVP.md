@@ -1,7 +1,7 @@
 # Architecture fonctionnelle du MVP
 
 Date : 2026-09-30
-Statut : architecture PWA validée, backend à connecter
+Statut : PWA statique déployable sur Render, backend à connecter
 
 ## 1. Architecture générale
 
@@ -24,6 +24,8 @@ Application mobile-first
 ## 2. Application terrain
 
 Le client terrain principal est une PWA responsive et installable. Une fois ajoutée à l'écran d'accueil, elle s'ouvre en mode autonome depuis une icône VISTA, sans passage par un catalogue d'applications.
+
+Le pilote frontend est généré comme un site statique React/Vite et publié sur Render depuis GitHub. Ce choix garde le client portable : le même build pourra être servi ultérieurement par un autre CDN sans modifier le parcours terrain. Render n'est pas encore le backend métier ; il héberge uniquement les fichiers de la PWA pendant cette phase.
 
 Les captures sont écrites immédiatement dans IndexedDB. Elles constituent une file locale de brouillons jusqu'à confirmation de leur réception par le futur backend. La synchronisation se produit lorsque l'application est ouverte et retrouve le réseau ; elle ne doit pas dépendre d'une exécution prolongée en arrière-plan.
 

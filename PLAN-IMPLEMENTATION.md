@@ -26,7 +26,8 @@ Construire et tester sur une copropriété pilote une application autonome couvr
 - [x] Choisir le mode de diffusion : téléchargement du PDF, puis envoi depuis la messagerie habituelle.
 - [x] Définir le comportement réseau : capture hors connexion et synchronisation différée obligatoire.
 - [x] Choisir la pile applicative : PWA React/TypeScript installable.
-- [ ] Choisir l'hébergement de production et le backend.
+- [x] Choisir l'hébergement du frontend pilote : Render Static Site.
+- [ ] Choisir l'hébergement du backend et des données de production.
 - [ ] Définir les données à migrer depuis Notion.
 
 Livrable : dossier de décisions techniques validé.

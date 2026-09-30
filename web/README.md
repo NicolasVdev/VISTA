@@ -25,7 +25,7 @@ pnpm install
 pnpm dev
 ```
 
-Ouvrir ensuite `http://localhost:3000`.
+Ouvrir ensuite l'adresse locale affichée par Vite, généralement `http://localhost:5173`.
 
 ## Contrôles
 
@@ -41,3 +41,14 @@ pnpm test
 - Android : utiliser le bouton `Installer VISTA` ou l'option d'installation du navigateur.
 
 Le microphone, l'appareil photo et la photothèque nécessitent l'autorisation du gestionnaire et une origine HTTPS en dehors de `localhost`.
+
+## Déploiement Render
+
+La PWA est construite comme un site statique portable. Le fichier [`../render.yaml`](../render.yaml) décrit le service Render :
+
+- build depuis le sous-dossier `web/` avec pnpm ;
+- publication du dossier `web/dist` ;
+- HTTPS et CDN gérés par Render ;
+- déploiement automatique à chaque commit sur la branche connectée.
+
+Cette phase pilote ne contient aucun secret ni stockage serveur. Les données de visite restent dans IndexedDB sur l'appareil utilisé.
