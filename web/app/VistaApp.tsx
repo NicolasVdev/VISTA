@@ -1,6 +1,7 @@
 "use client";
 
-import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { ArrowLeft, ArrowRight, Ban, Camera, Check, ClipboardList, Download, House, Images, ListChecks, LoaderCircle, Mic, Plus, Square, X } from "lucide-react";
 import {
   loadFieldState,
   resetFieldState,
@@ -382,6 +383,7 @@ export default function VistaApp() {
 
       {screen === "visit" ? (
         <VisitScreen
+          online={online}
           observations={currentZoneObservations}
           currentZone={currentZone}
           zoneStatus={currentZoneProgress?.status ?? "pending"}
@@ -489,7 +491,7 @@ function HomeScreen({
 
       {!installed && (
         <button type="button" className="install-card" onClick={onInstall}>
-          <span className="install-icon">↓</span>
+          <span className="install-icon"><Download size={21} aria-hidden="true" /></span>
           <span><strong>Installer VISTA</strong><small>Ajoutez l’icône sur votre écran d’accueil</small></span>
           <b>Installer</b>
         </button>
@@ -522,6 +524,7 @@ function HomeScreen({
 }
 
 function VisitScreen({
+  online,
   observations,
   currentZone,
   zoneStatus,
@@ -545,6 +548,7 @@ function VisitScreen({
   onCamera,
   onLibrary,
 }: {
+  online: boolean;
   observations: ObservationView[];
   currentZone: ZoneTemplate;
   zoneStatus: ZoneStatus;
@@ -570,12 +574,67 @@ function VisitScreen({
 }) {
   const percent = Math.round((completedZoneCount / ZONES.length) * 100);
   const canSave = Boolean(draft.trim() || draftAudio || draftPhotos.length);
+  const hasMedia = Boolean(draftAudio || draftPhotos.length);
+  const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fieldRef = useRef<HTMLElement>(null);
+  const attachmentMenuRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = "0px";
+    const height = Math.min(textarea.scrollHeight, 120);
+    textarea.style.height = `${height}px`;
+    textarea.style.overflowY = textarea.scrollHeight > 120 ? "auto" : "hidden";
+  }, [draft, hasMedia]);
+
+  useEffect(() => {
+    // Le clavier réduit le viewport visible, même si le viewport CSS ne change pas.
+    const viewport = window.visualViewport;
+    const updateViewport = () => {
+      if (viewport && viewport.scale !== 1) return;
+      fieldRef.current?.style.setProperty("--field-height", `${viewport?.height ?? window.innerHeight}px`);
+      fieldRef.current?.style.setProperty("--field-top", `${viewport?.offsetTop ?? 0}px`);
+      setKeyboardOpen(Boolean(viewport && window.innerHeight - viewport.height > 140));
+    };
+    updateViewport();
+    viewport?.addEventListener("resize", updateViewport);
+    viewport?.addEventListener("scroll", updateViewport);
+    window.addEventListener("resize", updateViewport);
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      viewport?.removeEventListener("resize", updateViewport);
+      viewport?.removeEventListener("scroll", updateViewport);
+      window.removeEventListener("resize", updateViewport);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!attachmentMenuOpen) return;
+    const dismissOutside = (event: PointerEvent) => {
+      if (!attachmentMenuRef.current?.contains(event.target as Node)) setAttachmentMenuOpen(false);
+    };
+    const dismissEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setAttachmentMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", dismissOutside);
+    document.addEventListener("keydown", dismissEscape);
+    return () => {
+      document.removeEventListener("pointerdown", dismissOutside);
+      document.removeEventListener("keydown", dismissEscape);
+    };
+  }, [attachmentMenuOpen]);
 
   return (
-    <section className="field-screen">
+    <section ref={fieldRef} className={`field-screen ${keyboardOpen ? "keyboard-open" : ""}`}>
+      <div className="field-content">
       <header className="field-header">
-        <button type="button" className="icon-button" onClick={onBack} aria-label="Retour">←</button>
-        <div><span>Résidence du Parc</span><strong>Zone {zoneIndex + 1} sur {ZONES.length}</strong></div>
+        <button type="button" className="icon-button" onClick={onBack} aria-label="Retour"><ArrowLeft size={22} aria-hidden="true" /></button>
+        <div><span>Résidence du Parc{!online ? " · Hors connexion" : ""}</span><strong>Zone {zoneIndex + 1} sur {ZONES.length}</strong></div>
         <span className="progress-number">{percent}%</span>
       </header>
 
@@ -592,34 +651,52 @@ function VisitScreen({
       <div className="capture-feed">
         {observations.length === 0 ? (
           <div className="empty-capture">
-            <span>＋</span>
-            <strong>Ajoutez ce que vous observez</strong>
-            <p>Une observation peut réunir un texte, une note vocale et plusieurs photos.</p>
+            <span><Mic size={24} aria-hidden="true" /></span>
+            <strong>Dictez votre premier constat</strong>
+            <p>Appuyez sur le micro pour parler, ou écrivez ci-dessous. Le bouton + permet d’ajouter des photos.</p>
           </div>
         ) : observations.map((observation) => <ObservationCard key={observation.id} observation={observation} />)}
       </div>
+      </div>
 
       <div className="composer-wrap">
-        {recording && <div className="recording-bar"><i /> Enregistrement {durationLabel(recordingSeconds)} <span>Appuyez sur le micro pour terminer</span></div>}
+        {recording && <div className="recording-bar" role="status"><i /> Enregistrement {durationLabel(recordingSeconds)} <span>Appuyez sur ■ pour terminer</span></div>}
         {(draftAudio || draftPhotos.length > 0) && (
           <DraftAttachments audio={draftAudio} photos={draftPhotos} onRemoveAudio={onRemoveAudio} onRemovePhoto={onRemovePhoto} />
         )}
-        <div className="composer">
+        {hasMedia && <p id="composer-media-help" className="composer-context">{draftAudio ? "Note vocale" : "Photos"}{draftAudio && draftPhotos.length > 0 ? " + photos" : ""} · ajoutez un titre ou commentaire ci-dessous (facultatif).</p>}
+        <div className={`composer ${canSave ? "has-draft" : ""}`}>
+          <div className="attachment-control" ref={attachmentMenuRef}>
+            {attachmentMenuOpen && (
+              <div id="attachment-options" className="attachment-menu" role="group" aria-label="Ajouter des photos">
+                <button type="button" onClick={() => { setAttachmentMenuOpen(false); onCamera(); }}><Camera size={22} aria-hidden="true" /><span>Prendre une photo</span></button>
+                <button type="button" onClick={() => { setAttachmentMenuOpen(false); onLibrary(); }}><Images size={22} aria-hidden="true" /><span>Importer des photos</span></button>
+              </div>
+            )}
+            <button type="button" className="composer-tool" onClick={() => setAttachmentMenuOpen(!attachmentMenuOpen)} aria-label={attachmentMenuOpen ? "Fermer les options de photos" : "Ajouter des photos"} aria-expanded={attachmentMenuOpen} aria-controls="attachment-options" disabled={recording || saving}>
+              {attachmentMenuOpen ? <X size={23} aria-hidden="true" /> : <Plus size={25} aria-hidden="true" />}
+            </button>
+          </div>
           <textarea
+            ref={textareaRef}
             value={draft}
             onChange={(event) => onDraftChange(event.target.value)}
-            placeholder="Écrire une observation…"
+            onFocus={() => setAttachmentMenuOpen(false)}
+            placeholder={hasMedia ? "Titre / commentaire…" : "Écrire…"}
             rows={1}
-            aria-label="Observation écrite"
+            aria-label={hasMedia ? "Titre ou commentaire des pièces jointes" : "Observation écrite"}
+            aria-describedby={hasMedia ? "composer-media-help" : undefined}
           />
-          <button type="button" className="composer-tool" onClick={onCamera} aria-label="Prendre une photo">⌾</button>
-          <button type="button" className="composer-tool" onClick={onLibrary} aria-label="Choisir des photos">▧</button>
-          <button type="button" className={`mic-button ${recording ? "recording" : ""}`} onClick={onToggleRecording} aria-label={recording ? "Arrêter l’enregistrement" : "Ajouter une note vocale"}>●</button>
-          <button type="button" className="send-button" onClick={onSave} disabled={!canSave || saving || recording} aria-label="Enregistrer l’observation">↑</button>
+          <button type="button" className={`mic-button ${recording ? "recording" : ""}`} onClick={onToggleRecording} disabled={saving || Boolean(draftAudio)} aria-label={recording ? "Arrêter l’enregistrement" : "Ajouter une note vocale"}>
+            {recording ? <Square size={20} fill="currentColor" aria-hidden="true" /> : <Mic size={23} aria-hidden="true" />}
+          </button>
+          {canSave && <button type="button" className="send-button" onClick={() => { setAttachmentMenuOpen(false); onSave(); }} disabled={saving || recording} aria-label="Enregistrer l’observation">
+            {saving ? <LoaderCircle size={23} className="saving-spinner" aria-hidden="true" /> : <ArrowRight size={25} aria-hidden="true" />}
+          </button>}
         </div>
         <div className="zone-navigation">
-          <button type="button" onClick={onPrevious} disabled={zoneIndex === 0}>← Zone précédente</button>
-          <button type="button" className="next-zone" onClick={onNext}>{zoneIndex === ZONES.length - 1 ? "Vérifier la visite" : "Valider et continuer"} →</button>
+          <button type="button" onClick={onPrevious} disabled={zoneIndex === 0}><ArrowLeft size={17} aria-hidden="true" /> Zone précédente</button>
+          <button type="button" className="next-zone" onClick={onNext}>{zoneIndex === ZONES.length - 1 ? "Vérifier la visite" : "Zone suivante"}<ArrowRight size={18} aria-hidden="true" /></button>
         </div>
       </div>
     </section>
@@ -631,8 +708,8 @@ function ZoneStatusPicker({ status, hasObservations, onChange }: { status: ZoneS
     <section className="zone-status-card">
       <div><span>Statut de la zone</span><strong className={`zone-status status-${status}`}>{STATUS_LABELS[status]}</strong></div>
       <div className="zone-status-actions">
-        <button type="button" className={status === "clear" ? "active" : ""} disabled={hasObservations} onClick={() => onChange("clear")}>✓ Rien à signaler</button>
-        <button type="button" className={status === "inaccessible" ? "active" : ""} disabled={hasObservations} onClick={() => onChange("inaccessible")}>⊘ Non accessible</button>
+        <button type="button" className={status === "clear" ? "active" : ""} disabled={hasObservations} onClick={() => onChange("clear")}><Check size={17} aria-hidden="true" /> Rien à signaler</button>
+        <button type="button" className={status === "inaccessible" ? "active" : ""} disabled={hasObservations} onClick={() => onChange("inaccessible")}><Ban size={17} aria-hidden="true" /> Non accessible</button>
       </div>
     </section>
   );
@@ -643,8 +720,10 @@ function DraftAttachments({ audio, photos, onRemoveAudio, onRemovePhoto }: { aud
     <div className="draft-attachments">
       {audio && (
         <div className="draft-audio">
-          <span>● Note vocale prête</span>
-          <button type="button" onClick={onRemoveAudio} aria-label="Retirer la note vocale">×</button>
+          <span><Mic size={18} aria-hidden="true" /> Note vocale jointe</span>
+          {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+          <audio src={audio.previewUrl} controls preload="metadata" aria-label="Écouter la note vocale avant enregistrement" />
+          <button type="button" onClick={onRemoveAudio} aria-label="Retirer la note vocale"><X size={16} aria-hidden="true" /></button>
         </div>
       )}
       {photos.length > 0 && (
@@ -652,7 +731,7 @@ function DraftAttachments({ audio, photos, onRemoveAudio, onRemovePhoto }: { aud
           {photos.map((photo) => (
             <div key={photo.id}>
               <img src={photo.previewUrl} alt="Pièce jointe à l’observation" />
-              <button type="button" onClick={() => onRemovePhoto(photo.id)} aria-label="Retirer la photo">×</button>
+              <button type="button" onClick={() => onRemovePhoto(photo.id)} aria-label="Retirer la photo"><X size={16} aria-hidden="true" /></button>
             </div>
           ))}
         </div>
@@ -662,7 +741,7 @@ function DraftAttachments({ audio, photos, onRemoveAudio, onRemovePhoto }: { aud
 }
 
 function ObservationCard({ observation }: { observation: ObservationView }) {
-  const parts = [observation.text ? "Texte" : "", observation.audio ? "Voix" : "", observation.photos.length ? `${observation.photos.length} photo${observation.photos.length > 1 ? "s" : ""}` : ""].filter(Boolean);
+  const parts = [observation.text ? (observation.audio || observation.photos.length ? "Commentaire" : "Texte") : "", observation.audio ? "Voix" : "", observation.photos.length ? `${observation.photos.length} photo${observation.photos.length > 1 ? "s" : ""}` : ""].filter(Boolean);
   return (
     <article className="capture-card observation-card">
       <div className="capture-meta"><span>{parts.join(" · ")}</span><time>{formatTime(observation.createdAt)}</time></div>
@@ -758,9 +837,9 @@ function ActionsScreen() {
 function BottomNav({ screen, onChange }: { screen: Screen; onChange: (screen: Screen) => void }) {
   return (
     <nav className="bottom-nav" aria-label="Navigation principale">
-      <button className={screen === "home" ? "active" : ""} type="button" onClick={() => onChange("home")}><span>⌂</span>Accueil</button>
-      <button className={screen === "visits" ? "active" : ""} type="button" onClick={() => onChange("visits")}><span>▣</span>Visites</button>
-      <button className={screen === "actions" ? "active" : ""} type="button" onClick={() => onChange("actions")}><span>✓</span>Actions</button>
+      <button className={screen === "home" ? "active" : ""} type="button" onClick={() => onChange("home")}><House size={21} aria-hidden="true" />Accueil</button>
+      <button className={screen === "visits" ? "active" : ""} type="button" onClick={() => onChange("visits")}><ClipboardList size={21} aria-hidden="true" />Visites</button>
+      <button className={screen === "actions" ? "active" : ""} type="button" onClick={() => onChange("actions")}><ListChecks size={21} aria-hidden="true" />Actions</button>
     </nav>
   );
 }

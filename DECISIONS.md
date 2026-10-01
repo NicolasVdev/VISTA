@@ -105,3 +105,9 @@ Conséquences :
 - les données saisies restent locales à l'appareil tant que le backend n'est pas connecté ;
 - l'authentification métier devra être ajoutée avant toute synchronisation de données réelles ;
 - la PWA reste portable vers un autre hébergeur grâce à son build statique standard.
+
+## 2026-10-01 — Saisie centrée sur la voix et fiche copropriété
+
+La barre de saisie suit une messagerie mobile : micro permanent, menu « + » pour la prise ou l'import de photos, flèche vers la droite pour enregistrer. Le texte reste utilisable seul ; avec des médias, il sert de titre ou commentaire facultatif. Les icônes utilisent Lucide React. Le composeur suit le viewport visible, avec contenu défilant séparément et sans espace fixe réservé au clavier.
+
+Le modèle cible permet de configurer une copropriété et ses bâtiments, niveaux, espaces et équipements pour générer son parcours. La fiche sera éditable sur mobile avec des formulaires simples. Une visite conserve une copie de son parcours, afin de préserver l'historique lors d'un changement de configuration. Le modèle proposé et ses étapes de livraison sont décrits dans [MODELE-COPROPRIETES.md](MODELE-COPROPRIETES.md). Cette configuration n'est pas encore implémentée dans la démo.
