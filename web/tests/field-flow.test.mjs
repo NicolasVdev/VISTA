@@ -15,8 +15,8 @@ try {
   playwright = require("playwright");
 } catch { /* Static build tests remain available without browser tooling. */ }
 
-test("field UX and IndexedDB v2 → v4 regression suite", { skip: !playwright }, async (t) => {
-  const server = await createServer({ server: { host: "127.0.0.1", port: 0 }, logLevel: "error" });
+test("field UX and IndexedDB v2 → v5 regression suite", { skip: !playwright }, async (t) => {
+  const server = await createServer({ server: { host: "127.0.0.1", port: 0, watch: { ignored: ["**/artifacts/**"] } }, logLevel: "error" });
   await server.listen();
   const origin = server.resolvedUrls.local[0];
   const browser = await playwright.chromium.launch({ headless: true,
@@ -276,19 +276,121 @@ test("field UX and IndexedDB v2 → v4 regression suite", { skip: !playwright },
         await navigator.serviceWorker.ready;
         if (!navigator.serviceWorker.controller) await new Promise((resolve) => navigator.serviceWorker.addEventListener("controllerchange", resolve, { once: true }));
       });
-      const keys = await offlinePage.evaluate(async () => (await (await caches.open("vista-shell-v3")).keys()).map((request) => new URL(request.url).pathname));
+      const keys = await offlinePage.evaluate(async () => (await (await caches.open("vista-shell-v4")).keys()).map((request) => new URL(request.url).pathname));
       assert.equal(keys.some((key) => /\/assets\/.+\.js$/.test(key)), true);
       assert.equal(keys.some((key) => /\/assets\/.+\.css$/.test(key)), true);
       assert.equal(keys.includes("/fonts/figtree-latin-wght-normal.woff2"), true);
+      assert.equal(keys.includes("/vendor/pdf-lib.min.js"), true);
+      assert.equal(keys.includes("/vendor/jszip.min.js"), true);
       await offlineContext.setOffline(true);
       await offlinePage.reload();
       await offlinePage.getByRole("button", { name: "Commencer la visite" }).waitFor();
       assert.match(await offlinePage.locator("body").innerText(), /Hors connexion/);
       await offlinePage.evaluate(() => document.fonts.ready);
       assert.equal(await offlinePage.evaluate(() => document.fonts.check('800 36px Figtree')), true);
+      await offlinePage.evaluate(async () => {
+        const database = await new Promise((resolve, reject) => { const request = indexedDB.open("vista-field-drafts"); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
+        const transaction = database.transaction(["visits", "zone-progress"], "readwrite");
+        const visits = transaction.objectStore("visits"); const zones = transaction.objectStore("zone-progress");
+        visits.getAll().onsuccess = (event) => event.target.result.forEach((visit) => visits.put({ ...visit, status: "completed", completedAt: new Date().toISOString() }));
+        zones.getAll().onsuccess = (event) => event.target.result.forEach((zone) => zones.put({ ...zone, status: "clear" }));
+        await new Promise((resolve, reject) => { transaction.oncomplete = resolve; transaction.onerror = () => reject(transaction.error); }); database.close();
+      });
+      await offlinePage.reload(); await offlinePage.getByRole("button", { name: "Consulter la visite", exact: true }).click();
+      await offlinePage.getByRole("button", { name: "Compte rendu et sauvegarde", exact: true }).click();
+      await offlinePage.getByRole("checkbox").check(); await offlinePage.getByRole("button", { name: "Préparer le PDF", exact: true }).click();
+      await offlinePage.getByRole("link", { name: "Télécharger le PDF", exact: true }).waitFor();
+      await offlinePage.getByRole("button", { name: "Préparer la sauvegarde", exact: true }).click();
+      await offlinePage.getByRole("link", { name: "Télécharger la sauvegarde", exact: true }).waitFor();
     } finally {
       await offlineContext.close();
       await new Promise((resolve) => production.httpServer.close(resolve));
     }
+  });
+
+  await t.test("custom routes preserve identities, media and previous visits", async () => {
+    const customContext = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const custom = await customContext.newPage();
+    await custom.goto(origin);
+    await custom.getByRole("button", { name: /Nouvelle visite/ }).first().click();
+    await custom.getByLabel("Résidence", { exact: true }).fill("Résidence pilote fictive");
+    await custom.getByLabel("Adresse", { exact: true }).fill("12 rue de test");
+    await custom.getByLabel("Gestionnaire", { exact: true }).fill("Gestionnaire de test");
+    await custom.getByLabel("Nom de la zone 1", { exact: true }).fill("10e étage");
+    await custom.getByRole("button", { name: "Retirer la zone 9", exact: true }).click();
+    await custom.getByRole("button", { name: "Ajouter une zone", exact: true }).click();
+    await custom.getByLabel("Nom de la zone 9", { exact: true }).fill("Chaufferie");
+    await custom.getByRole("button", { name: "Créer la visite", exact: true }).click();
+    await custom.getByRole("button", { name: "Commencer la visite", exact: true }).waitFor();
+    const result = await custom.evaluate(async () => {
+      const db = await import("/app/lib/vista-db.ts"); const templates = [{ id: "toiture", label: "Toiture", hint: "" }];
+      let state = await db.loadFieldState(templates); const firstId = state.visit.id; const zoneId = state.zones[0].zoneId;
+      const now = new Date().toISOString();
+      await db.saveObservation({ id: "pilot-constat", visitId: firstId, zoneId, zoneLabel: "10e étage", text: "Fuite fictive", severity: "urgent", createAction: true, photos: [], syncStatus: "local", createdAt: now, updatedAt: now });
+      let deletionBlocked = false; try { await db.saveVisitRoute(firstId, state.zones.slice(1).map((zone) => ({ id: zone.zoneId, label: zone.zoneLabel, hint: zone.hint || "" }))); } catch { deletionBlocked = true; }
+      const route = state.zones.map((zone) => ({ id: zone.zoneId, label: zone.zoneId === zoneId ? "Terrasse technique" : zone.zoneLabel, hint: zone.hint || "" }));
+      await db.saveVisitRoute(firstId, [...route.slice(1), route[0]]);
+      state = await db.loadFieldState(templates);
+      const renamed = state.observations[0];
+      for (const zone of state.zones.filter((zone) => zone.status === "pending")) await db.saveZoneProgress({ ...zone, status: "clear" });
+      await db.closeFieldVisit(firstId);
+      let closedBlocked = false; try { await db.saveVisitRoute(firstId, route); } catch { closedBlocked = true; }
+      const secondId = await db.createFieldVisit({ propertyName: state.visit.propertyName, address: state.visit.address, managerName: "Autre gestionnaire", scheduledAt: now }, [{ id: "second-zone", label: "Hall", hint: "Portes" }]);
+      const second = await db.loadFieldState(templates);
+      await db.selectFieldVisit(firstId); const first = await db.loadFieldState(templates);
+      await db.resetFieldState(templates); const preserved = await db.loadFieldState(templates, firstId);
+      return { firstId, secondId, deletionBlocked, closedBlocked, renamed, second, first, preserved };
+    });
+    assert.equal(result.deletionBlocked, true); assert.equal(result.closedBlocked, true);
+    assert.equal(result.renamed.zoneLabel, "Terrasse technique"); assert.equal(result.renamed.id, "pilot-constat");
+    assert.equal(result.first.zones.at(-1).zoneLabel, "Terrasse technique");
+    assert.equal(result.first.zones.some((zone) => zone.zoneLabel === "Sous-sol & parking"), false);
+    assert.equal(result.second.property.id, result.first.property.id);
+    assert.equal(result.second.zones.length, 1); assert.equal(result.second.observations.length, 0);
+    assert.equal(result.preserved.visits.length, 2); assert.equal(result.preserved.observations.length, 1);
+    await custom.reload(); await custom.getByRole("button", { name: "Consulter la visite", exact: true }).waitFor();
+    assert.equal(await custom.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    await customContext.close();
+  });
+
+  await t.test("PDF with photos and full archive exclude private access information", async () => {
+    const exportContext = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const exportPage = await exportContext.newPage(); await exportPage.goto(origin);
+    const result = await exportPage.evaluate(async () => {
+      const db = await import("/app/lib/vista-db.ts"); const exporter = await import("/app/lib/vista-export.ts");
+      const templates = [{ id: "toiture", label: "Toiture", hint: "" }];
+      const visitId = await db.createFieldVisit({ propertyName: "Résidence pilote fictive", address: "12 rue de test", managerName: "Gestionnaire de test", scheduledAt: "2026-10-06T08:00:00.000Z" }, [{ id: "terrasse", label: "Terrasse technique", hint: "Étanchéité" }, { id: "chaufferie", label: "Chaufferie", hint: "Accès" }]);
+      let state = await db.loadFieldState(templates); const now = new Date().toISOString();
+      await db.saveVisit({ ...state.visit, accessNotes: "PRIVATE-CODE-DO-NOT-EXPORT" });
+      await db.saveProperty({ ...state.property, accessCodes: "PRIVATE-CODE-DO-NOT-EXPORT", guardianName: "PRIVATE-GUARDIAN", guardianPhone: "PRIVATE-PHONE" });
+      const canvas = document.createElement("canvas"); canvas.width = 800; canvas.height = 500; const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#dfece5"; ctx.fillRect(0, 0, 800, 500); ctx.fillStyle = "#19392b"; ctx.font = "30px sans-serif"; ctx.fillText("PHOTO FICTIVE - TEST VISTA", 50, 100);
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+      const audio = { id: "qa-audio", blob: new Blob(["original-audio"], { type: "audio/webm" }), mimeType: "audio/webm", fileName: "test.webm", createdAt: now };
+      await db.saveObservation({ id: "qa-observation", visitId, zoneId: "terrasse", zoneLabel: "Terrasse technique", text: "Infiltration fictive : étanchéité dégradée, intervention à prévoir. ".repeat(20), severity: "urgent", createAction: true, photos: [{ id: "qa-photo", blob, mimeType: "image/png", fileName: "test.png", createdAt: now }], audio, syncStatus: "local", createdAt: now, updatedAt: now });
+      await db.saveDraft({ id: `${visitId}:chaufferie`, visitId, zoneId: "chaufferie", text: "Brouillon à conserver", severity: "info", photos: [], audio });
+      state = await db.loadFieldState(templates); await db.saveZoneProgress({ ...state.zones[1], status: "inaccessible", inaccessibleReason: "missing_key" });
+      await db.closeFieldVisit(visitId); state = await db.loadFieldState(templates);
+      const pdf = await exporter.generateVisitPdf(state); const archive = await exporter.generateVisitArchive(state);
+      const zip = await new window.JSZip().loadAsync(archive); const json = await zip.file("visite.json").async("string");
+      const media = await zip.file("medias/qa-audio.webm").async("string");
+      window.qaPdfUrl = URL.createObjectURL(pdf);
+      const link = document.createElement("a"); link.href = window.qaPdfUrl; link.download = "beta-qa.pdf"; link.textContent = "QA PDF"; document.body.append(link);
+      return { json, media, size: pdf.size, blockers: exporter.reportBlockers({ ...state, observations: state.observations.map((item) => ({ ...item, text: "" })) }) };
+    });
+    assert.equal(result.json.includes("PRIVATE-"), false); assert.equal(result.media, "original-audio");
+    assert.equal(JSON.parse(result.json).drafts[0].text, "Brouillon à conserver");
+    assert.equal(JSON.parse(result.json).observations[0].photos[0].path, "medias/qa-photo.png");
+    assert.ok(result.size > 5000); assert.equal(result.blockers.length, 1);
+    await mkdir(new URL("../artifacts/", import.meta.url), { recursive: true });
+    const downloadPromise = exportPage.waitForEvent("download"); await exportPage.getByRole("link", { name: "QA PDF", exact: true }).click();
+    await (await downloadPromise).saveAs(fileURLToPath(new URL("../artifacts/beta-qa.pdf", import.meta.url)));
+    await exportPage.reload(); await exportPage.getByRole("button", { name: "Consulter la visite", exact: true }).click();
+    await exportPage.getByRole("button", { name: "Compte rendu et sauvegarde", exact: true }).click();
+    await exportPage.getByRole("checkbox").check(); await exportPage.getByRole("button", { name: "Préparer le PDF", exact: true }).click();
+    await exportPage.getByRole("link", { name: "Télécharger le PDF", exact: true }).waitFor();
+    await exportPage.screenshot({ path: fileURLToPath(new URL("../artifacts/beta-export-mobile.png", import.meta.url)) });
+    assert.equal(await exportPage.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    await exportContext.close();
   });
 });

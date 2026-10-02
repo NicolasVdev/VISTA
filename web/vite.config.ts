@@ -5,5 +5,6 @@ export default defineConfig({
   plugins: [react()],
   server: {
     host: true,
+    watch: { ignored: ["**/artifacts/**"] },
   },
 });

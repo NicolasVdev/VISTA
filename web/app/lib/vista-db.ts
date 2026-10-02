@@ -28,6 +28,8 @@ export type VistaMedia = {
 };
 
 export type VistaVisit = {
+  managerName?: string;
+  routeVersion?: number;
   propertyId?: string;
   id: string;
   propertyName: string;
@@ -43,6 +45,7 @@ export type VistaVisit = {
 };
 
 export type VistaZoneProgress = {
+  hint?: string;
   id: string;
   visitId: string;
   zoneId: string;
@@ -70,6 +73,7 @@ export type VistaObservation = {
 };
 
 export type VistaFieldState = {
+  visits: VistaVisit[];
   property: VistaProperty;
   visit: VistaVisit;
   zones: VistaZoneProgress[];
@@ -97,7 +101,7 @@ type LegacyCapture = {
 };
 
 const DATABASE_NAME = "vista-field-drafts";
-const DATABASE_VERSION = 4;
+const DATABASE_VERSION = 5;
 const LEGACY_CAPTURE_STORE = "captures";
 const VISIT_STORE = "visits";
 const ZONE_STORE = "zone-progress";
@@ -112,6 +116,7 @@ function openDatabase(): Promise<IDBDatabase> {
 
     request.onupgradeneeded = () => {
       const database = request.result;
+      if (!database.objectStoreNames.contains("settings")) database.createObjectStore("settings", { keyPath: "id" });
       if (!database.objectStoreNames.contains("properties")) database.createObjectStore("properties", { keyPath: "id" });
       for (const name of ["actions", "drafts"]) {
         if (!database.objectStoreNames.contains(name)) {
@@ -182,11 +187,12 @@ function defaultVisit(firstZoneId: string): VistaVisit {
   };
 }
 
-function defaultZones(templates: ZoneTemplate[]): VistaZoneProgress[] {
+function defaultZones(templates: ZoneTemplate[], visitId = DEMO_VISIT_ID): VistaZoneProgress[] {
   const now = new Date().toISOString();
   return templates.map((zone, order) => ({
-    id: `${DEMO_VISIT_ID}:${zone.id}`,
-    visitId: DEMO_VISIT_ID,
+    id: `${visitId}:${zone.id}`,
+    visitId,
+    hint: zone.hint,
     zoneId: zone.id,
     zoneLabel: zone.label,
     order,
@@ -218,7 +224,8 @@ function legacyToObservation(capture: LegacyCapture): VistaObservation {
   };
 }
 
-async function readState(): Promise<{
+async function readState(requestedVisitId?: string): Promise<{
+  visits: VistaVisit[];
   visit?: VistaVisit;
   zones: VistaZoneProgress[];
   observations: VistaObservation[];
@@ -229,34 +236,37 @@ async function readState(): Promise<{
 }> {
   const database = await openDatabase();
   const transaction = database.transaction(
-    [VISIT_STORE, ZONE_STORE, OBSERVATION_STORE, LEGACY_CAPTURE_STORE, "actions", "drafts", "properties"],
+    [VISIT_STORE, ZONE_STORE, OBSERVATION_STORE, LEGACY_CAPTURE_STORE, "actions", "drafts", "properties", "settings"],
     "readonly",
   );
   const completion = transactionComplete(transaction);
-  const visitRequest = transaction.objectStore(VISIT_STORE).get(DEMO_VISIT_ID);
-  const zoneRequest = transaction.objectStore(ZONE_STORE).index("visitId").getAll(DEMO_VISIT_ID);
-  const observationRequest = transaction.objectStore(OBSERVATION_STORE).index("visitId").getAll(DEMO_VISIT_ID);
+  const visitRequest = transaction.objectStore(VISIT_STORE).getAll();
+  const zoneRequest = transaction.objectStore(ZONE_STORE).getAll();
+  const observationRequest = transaction.objectStore(OBSERVATION_STORE).getAll();
   const legacyRequest = transaction.objectStore(LEGACY_CAPTURE_STORE).getAll();
 
-  const [visit, zones, observations, legacyCaptures, actions, drafts, properties] = await Promise.all([
-    requestResult(visitRequest) as Promise<VistaVisit | undefined>,
+  const [visits, allZones, allObservations, legacyCaptures, actions, allDrafts, properties, selection] = await Promise.all([
+    requestResult(visitRequest) as Promise<VistaVisit[]>,
     requestResult(zoneRequest) as Promise<VistaZoneProgress[]>,
     requestResult(observationRequest) as Promise<VistaObservation[]>,
     requestResult(legacyRequest) as Promise<LegacyCapture[]>,
     requestResult(transaction.objectStore("actions").getAll()) as Promise<FollowUpAction[]>,
-    requestResult(transaction.objectStore("drafts").index("visitId").getAll(DEMO_VISIT_ID)) as Promise<VistaDraft[]>,
+    requestResult(transaction.objectStore("drafts").getAll()) as Promise<VistaDraft[]>,
     requestResult(transaction.objectStore("properties").getAll()) as Promise<VistaProperty[]>,
+    requestResult(transaction.objectStore("settings").get("active-visit")) as Promise<{ value: string } | undefined>,
   ]);
   await completion;
   database.close();
-  return { visit, zones, observations, legacyCaptures, actions, drafts, properties };
+  const visit = visits.find((item) => item.id === (requestedVisitId ?? selection?.value)) ?? visits.find((item) => item.id === DEMO_VISIT_ID) ?? visits[0];
+  const visitId = visit?.id ?? DEMO_VISIT_ID;
+  return { visit, visits, zones: allZones.filter((item) => item.visitId === visitId), observations: allObservations.filter((item) => item.visitId === visitId), legacyCaptures, actions, drafts: allDrafts.filter((item) => item.visitId === visitId), properties };
 }
 
 async function seedMissingState(
   templates: ZoneTemplate[],
   current: Awaited<ReturnType<typeof readState>>,
 ): Promise<void> {
-  const missingZones = defaultZones(templates).filter(
+  const missingZones = current.visit?.routeVersion ? [] : defaultZones(templates, current.visit?.id).filter(
     (zone) => !current.zones.some((savedZone) => savedZone.zoneId === zone.zoneId),
   );
   const migratedObservations = !current.visit && current.observations.length === 0
@@ -266,11 +276,11 @@ async function seedMissingState(
   const visit = current.visit ?? defaultVisit(templates[0].id);
   const propertyId = visit.propertyId ?? DEMO_PROPERTY_ID;
   const propertyExists = current.properties.some((property) => property.id === propertyId);
-  if (current.visit?.propertyId && propertyExists && missingZones.length === 0 && migratedObservations.length === 0) return;
+  if (current.visit?.propertyId && current.visit.routeVersion && propertyExists && missingZones.length === 0 && migratedObservations.length === 0) return;
 
   const database = await openDatabase();
   const transaction = database.transaction([VISIT_STORE, ZONE_STORE, OBSERVATION_STORE, "properties"], "readwrite");
-  if (!current.visit?.propertyId) transaction.objectStore(VISIT_STORE).put({ ...visit, propertyId });
+  if (!current.visit?.propertyId || !current.visit.routeVersion) transaction.objectStore(VISIT_STORE).put({ ...visit, propertyId, routeVersion: 1 });
   if (!propertyExists) transaction.objectStore("properties").put({ id: propertyId, name: visit.propertyName, address: visit.address, usefulInfo: visit.accessNotes, updatedAt: new Date().toISOString() });
   const zoneStore = transaction.objectStore(ZONE_STORE);
   missingZones.forEach((zone) => zoneStore.put(zone));
@@ -280,10 +290,10 @@ async function seedMissingState(
   database.close();
 }
 
-export async function loadFieldState(templates: ZoneTemplate[]): Promise<VistaFieldState> {
-  const initial = await readState();
+export async function loadFieldState(templates: ZoneTemplate[], visitId?: string): Promise<VistaFieldState> {
+  const initial = await readState(visitId);
   await seedMissingState(templates, initial);
-  const stored = await readState();
+  const stored = await readState(visitId);
   const visit = stored.visit ?? defaultVisit(templates[0].id);
   const observations = stored.observations.map((item) => ({ ...item, severity: item.severity ?? "info", createAction: item.createAction ?? false })).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   const observedZoneIds = new Set(observations.map((observation) => observation.zoneId));
@@ -294,7 +304,7 @@ export async function loadFieldState(templates: ZoneTemplate[]): Promise<VistaFi
     .sort((a, b) => a.order - b.order);
 
   const property = stored.properties.find((item) => item.id === visit.propertyId)!;
-  return { visit, property, zones, observations, actions: stored.actions, drafts: stored.drafts };
+  return { visit, property, zones, observations, actions: stored.actions, drafts: stored.drafts, visits: stored.visits.sort((a, b) => b.createdAt.localeCompare(a.createdAt)) };
 }
 
 export async function saveVisit(visit: VistaVisit): Promise<void> {
@@ -332,15 +342,73 @@ export async function resetFieldState(templates: ZoneTemplate[]): Promise<VistaF
     [VISIT_STORE, ZONE_STORE, OBSERVATION_STORE, LEGACY_CAPTURE_STORE, "actions", "drafts"],
     "readwrite",
   );
-  transaction.objectStore(VISIT_STORE).clear();
-  transaction.objectStore(ZONE_STORE).clear();
-  transaction.objectStore(OBSERVATION_STORE).clear();
+  transaction.objectStore(VISIT_STORE).delete(DEMO_VISIT_ID);
+  for (const name of [ZONE_STORE, OBSERVATION_STORE, "actions", "drafts"]) {
+    const store = transaction.objectStore(name);
+    const rows = await requestResult(store.index("visitId").getAll(DEMO_VISIT_ID)) as { id: string }[];
+    rows.forEach((row) => store.delete(row.id));
+  }
   transaction.objectStore(LEGACY_CAPTURE_STORE).clear();
-  transaction.objectStore("actions").clear();
-  transaction.objectStore("drafts").clear();
   await transactionComplete(transaction);
   database.close();
   return loadFieldState(templates);
+}
+
+export async function selectFieldVisit(visitId: string) {
+  const database = await openDatabase();
+  try {
+    const transaction = database.transaction([VISIT_STORE, "settings"], "readwrite");
+    const completion = transactionComplete(transaction);
+    const visit = await requestResult(transaction.objectStore(VISIT_STORE).get(visitId));
+    if (!visit) { await completion; throw new Error("Visite introuvable."); }
+    transaction.objectStore("settings").put({ id: "active-visit", value: visitId });
+    await completion;
+  } finally { database.close(); }
+}
+
+export async function createFieldVisit(details: { propertyName: string; address: string; managerName: string; scheduledAt: string }, route: ZoneTemplate[]): Promise<string> {
+  if (!details.propertyName.trim() || !details.address.trim() || !details.managerName.trim() || !Number.isFinite(Date.parse(details.scheduledAt))) throw new Error("Renseignez la résidence, l’adresse, le gestionnaire et la date.");
+  validateRoute(route);
+  const database = await openDatabase();
+  try {
+    const transaction = database.transaction([VISIT_STORE, ZONE_STORE, "properties", "settings"], "readwrite");
+    const completion = transactionComplete(transaction);
+    const properties = await requestResult(transaction.objectStore("properties").getAll()) as VistaProperty[];
+    const propertyName = details.propertyName.trim(); const address = details.address.trim(); const now = new Date().toISOString();
+    const existing = properties.find((item) => item.name.trim().toLocaleLowerCase() === propertyName.toLocaleLowerCase() && item.address.trim().toLocaleLowerCase() === address.toLocaleLowerCase());
+    const propertyId = existing?.id ?? crypto.randomUUID(); const id = crypto.randomUUID();
+    if (!existing) transaction.objectStore("properties").put({ id: propertyId, name: propertyName, address, updatedAt: now });
+    transaction.objectStore(VISIT_STORE).put({ ...details, propertyName, address, managerName: details.managerName.trim(), id, propertyId, routeVersion: 1, status: "planned", currentZoneId: route[0].id, createdAt: now, updatedAt: now });
+    defaultZones(route, id).forEach((zone) => transaction.objectStore(ZONE_STORE).put(zone));
+    transaction.objectStore("settings").put({ id: "active-visit", value: id });
+    await completion; return id;
+  } finally { database.close(); }
+}
+
+function validateRoute(route: ZoneTemplate[]) {
+  if (!route.length || route.length > 100 || route.some((zone) => !zone.id || !zone.label.trim()) || new Set(route.map((zone) => zone.id)).size !== route.length) throw new Error("Le parcours doit comporter de 1 à 100 zones nommées et distinctes.");
+}
+
+export async function saveVisitRoute(visitId: string, route: ZoneTemplate[]) {
+  validateRoute(route);
+  await mutateVisit(visitId, [ZONE_STORE, OBSERVATION_STORE, "drafts", "actions"], async (transaction, visit) => {
+    const store = transaction.objectStore(ZONE_STORE);
+    const previous = await requestResult(store.index("visitId").getAll(visitId)) as VistaZoneProgress[];
+    const observations = await requestResult(transaction.objectStore(OBSERVATION_STORE).index("visitId").getAll(visitId)) as VistaObservation[];
+    const drafts = await requestResult(transaction.objectStore("drafts").index("visitId").getAll(visitId)) as VistaDraft[];
+    const actions = await requestResult(transaction.objectStore("actions").index("visitId").getAll(visitId)) as FollowUpAction[];
+    const deleted = previous.filter((zone) => !route.some((next) => next.id === zone.zoneId));
+    if (deleted.some((zone) => observations.some((item) => item.zoneId === zone.zoneId) || drafts.some((item) => item.zoneId === zone.zoneId && (item.text.trim() || item.audio || item.photos.length)) || actions.some((item) => item.zoneId === zone.zoneId))) throw new Error("Une zone contenant un constat, une action ou un brouillon ne peut pas être supprimée. Videz-la d’abord ou marquez-la non accessible.");
+    const now = new Date().toISOString();
+    deleted.forEach((zone) => { store.delete(zone.id); transaction.objectStore("drafts").delete(`${visitId}:${zone.zoneId}`); });
+    route.forEach((zone, order) => {
+      const saved = previous.find((item) => item.zoneId === zone.id);
+      store.put({ ...saved, id: `${visitId}:${zone.id}`, visitId, zoneId: zone.id, zoneLabel: zone.label.trim(), hint: zone.hint.trim(), order, status: saved?.status ?? "pending", updatedAt: now });
+      observations.filter((item) => item.zoneId === zone.id).forEach((item) => transaction.objectStore(OBSERVATION_STORE).put({ ...item, zoneLabel: zone.label.trim() }));
+      actions.filter((item) => item.zoneId === zone.id).forEach((item) => transaction.objectStore("actions").put({ ...item, zoneLabel: zone.label.trim() }));
+    });
+    transaction.objectStore(VISIT_STORE).put({ ...visit, routeVersion: 1, currentZoneId: route.some((zone) => zone.id === visit.currentZoneId) ? visit.currentZoneId : route[0].id, updatedAt: now });
+  });
 }
 
 async function mutateVisit(visitId: string, stores: string[], operation: (transaction: IDBTransaction, visit: VistaVisit) => Promise<void>, allowCompleted = false) {

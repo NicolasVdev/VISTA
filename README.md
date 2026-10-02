@@ -33,6 +33,7 @@ Le gestionnaire qui effectue la visite est également responsable de la validati
 - [Architecture fonctionnelle](ARCHITECTURE-MVP.md)
 - [Plan d'implémentation](PLAN-IMPLEMENTATION.md)
 - [Parcours mobile](PARCOURS-MOBILE.md)
+- [Préparation et consignes du pilote](BETA-PILOTE.md)
 
 ## Application active
 
@@ -42,7 +43,7 @@ La version pilote est une application React/Vite statique, préparée pour être
 
 Le premier prototype Expo/React Native reste archivé dans [`mobile/`](mobile/README.md) pour conserver l'historique technique, mais il n'est plus la cible active.
 
-## État au 2026-09-30
+## État au 2026-10-03 — bêta locale en préparation
 
 - Parcours métier initial décrit.
 - Notes vocales courtes validées comme mode de captation du MVP.
@@ -58,4 +59,9 @@ Le premier prototype Expo/React Native reste archivé dans [`mobile/`](mobile/RE
 - Visite, progression par zone et observations multimédias regroupées persistées dans IndexedDB.
 - Reprise après fermeture et clôture bloquée tant qu'une zone n'est pas renseignée.
 - Migration vers une PWA statique portable et configuration Render réalisées.
-- Prochaine étape : connecter l'authentification, le backend de synchronisation et le stockage privé des médias.
+- Création de visites réelles et historique local, avec parcours personnalisable par visite.
+- Compte rendu PDF avec photos et sauvegarde ZIP produits localement ; téléchargement puis envoi depuis sa messagerie.
+- Build, lint et suite navigateur : 12 tests réussis, dont migration, parcours personnalisés, exports et fonctionnement hors connexion.
+- Publication de ces changements et tests physiques iPhone/Android encore à faire.
+- Transcription automatique, authentification et synchronisation encore absentes. Les notes vocales nécessitent une reprise textuelle manuelle pour le PDF ; la reprise téléphone/PC passe par le transfert des fichiers exportés.
+- Prochaine étape : lever ces limites critiques pour le pilote, tester une visite complète sur le téléphone du gestionnaire et vérifier la réception de son compte rendu avant mardi 6 octobre.

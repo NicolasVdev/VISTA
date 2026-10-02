@@ -2,11 +2,13 @@
 
 import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import { ArrowLeft, ArrowRight, Ban, Camera, Check, ChevronDown, ChevronRight, CircleAlert, ClipboardList, Download, House, Images, ListChecks, LoaderCircle, MapPin, Mic, Pencil, Phone, Square, Trash2, X } from "lucide-react";
-import { closeFieldVisit, deleteObservation, loadFieldState, reopenFieldVisit, resetFieldState, restoreObservation, saveAction, saveDraft, saveObservation, saveProperty, saveVisit, saveZoneProgress, type FollowUpAction, type InaccessibleReason, type Severity, type VistaDraft, type VistaFieldState, type VistaMedia, type VistaObservation, type VistaProperty, type VistaZoneProgress, type ZoneStatus, type ZoneTemplate } from "./lib/vista-db";
+import { closeFieldVisit, createFieldVisit, deleteObservation, DEMO_VISIT_ID, loadFieldState, reopenFieldVisit, resetFieldState, restoreObservation, saveAction, saveDraft, saveObservation, saveProperty, saveVisit, saveVisitRoute, selectFieldVisit, saveZoneProgress, type FollowUpAction, type InaccessibleReason, type Severity, type VistaDraft, type VistaFieldState, type VistaMedia, type VistaObservation, type VistaProperty, type VistaZoneProgress, type ZoneStatus, type ZoneTemplate } from "./lib/vista-db";
+import VisitSetup from "./VisitSetup";
+import VisitExport from "./VisitExport";
 
 type Screen = "home" | "visits" | "actions" | "visit" | "review";
 type InstallPrompt = Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: string }> };
-const ZONES: ZoneTemplate[] = [
+const DEFAULT_ZONES: ZoneTemplate[] = [
   { id: "toiture", label: "Toiture", hint: "Étanchéité, évacuations, équipements" },
   ...[6, 5, 4, 3, 2, 1].map((floor) => ({ id: `etage-${floor}`, label: floor === 1 ? "1er étage" : `${floor}e étage`, hint: "Palier, éclairage, portes, murs" })),
   { id: "rdc", label: "Rez-de-chaussée", hint: "Hall, boîtes aux lettres, accès" },
@@ -23,6 +25,7 @@ function zoneSeverity(observations: VistaObservation[], zoneId: string): Severit
   const items = observations.filter((item) => item.zoneId === zoneId);
   return items.some((item) => item.severity === "urgent") ? "urgent" : items.some((item) => item.severity === "planned") ? "planned" : items.length ? "info" : undefined;
 }
+function visitRoute(field: VistaFieldState): ZoneTemplate[] { return field.zones.map((zone) => ({ id: zone.zoneId, label: zone.zoneLabel, hint: zone.hint ?? DEFAULT_ZONES.find((item) => item.id === zone.zoneId)?.hint ?? "" })); }
 
 export default function VistaApp() {
   const [field, setField] = useState<VistaFieldState | null>(null);
@@ -37,6 +40,8 @@ export default function VistaApp() {
   const [error, setError] = useState("");
   const [online, setOnline] = useState(navigator.onLine);
   const [zonesOpen, setZonesOpen] = useState(false);
+  const [setupMode, setSetupMode] = useState<"new" | "route" | null>(null);
+  const [exportOpen, setExportOpen] = useState(false);
   const [leftPending, setLeftPending] = useState<number | null>(null);
   const [undo, setUndo] = useState<{ observation: VistaObservation; action?: FollowUpAction; expires: number } | null>(null);
   const [recording, setRecording] = useState(false);
@@ -52,6 +57,7 @@ export default function VistaApp() {
   const [installed, setInstalled] = useState(() => matchMedia("(display-mode: standalone)").matches || Boolean((navigator as Navigator & { standalone?: boolean }).standalone));
   const [installHidden, setInstallHidden] = useState(() => { try { return localStorage.getItem("vista-install-hidden") === "1"; } catch { return false; } });
   const visit = field?.visit;
+  const ZONES = field ? visitRoute(field) : DEFAULT_ZONES;
   const zone = ZONES[zoneIndex];
   const draft = visit ? drafts[zone.id] ?? emptyDraft(visit.id, zone.id) : undefined;
   const readonly = visit?.status === "completed";
@@ -65,12 +71,12 @@ export default function VistaApp() {
     window.addEventListener("online", onOnline); window.addEventListener("offline", onOnline);
     window.addEventListener("beforeinstallprompt", onInstall); window.addEventListener("appinstalled", onInstalled);
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => undefined);
-    loadFieldState(ZONES).then((state) => {
+    loadFieldState(DEFAULT_ZONES).then((state) => {
       if (!mounted.current) return;
       setField(state);
       draftRef.current = Object.fromEntries(state.drafts.map((item) => [item.zoneId, item]));
       setDrafts(draftRef.current);
-      setZoneIndex(Math.max(0, ZONES.findIndex((item) => item.id === state.visit.currentZoneId)));
+      setZoneIndex(Math.max(0, state.zones.findIndex((item) => item.zoneId === state.visit.currentZoneId)));
     }).catch(() => setError("Le stockage local n’est pas disponible. Vérifiez les autorisations du navigateur."));
     return () => {
       mounted.current = false;
@@ -92,10 +98,18 @@ export default function VistaApp() {
   }, [undo]);
 
   // Serialize writes so a delayed draft cannot overwrite a submitted/editing draft.
-  function write(operation: () => Promise<void>): Promise<boolean> {
+  function write(operation: () => Promise<void>, switchVisit = false): Promise<boolean> {
     setWrites((count) => count + 1);
     const result = queue.current.then(async () => {
-      try { await operation(); setField(await loadFieldState(ZONES)); setError(""); return true; }
+      try {
+        await operation(); const state = await loadFieldState(DEFAULT_ZONES); setField(state);
+        if (switchVisit) {
+          draftRef.current = Object.fromEntries(state.drafts.map((item) => [item.zoneId, item])); setDrafts(draftRef.current);
+          setZoneIndex(Math.max(0, state.zones.findIndex((item) => item.zoneId === state.visit.currentZoneId)));
+          setUndo(null); setLeftPending(null);
+        }
+        setError(""); return true;
+      }
       catch (cause) { setError(cause instanceof Error ? cause.message : "Enregistrement impossible. Vos données saisies restent affichées ; réessayez."); return false; }
       finally { setWrites((count) => count - 1); }
     });
@@ -215,7 +229,7 @@ export default function VistaApp() {
   function hideInstall() { setInstallHidden(true); try { localStorage.setItem("vista-install-hidden", "1"); } catch { /* The advice can still be dismissed for this session. */ } }
   async function reset() {
     flushDrafts();
-    if (await write(async () => { await resetFieldState(ZONES); })) {
+    if (await write(async () => { await resetFieldState(DEFAULT_ZONES); }, true)) {
       draftRef.current = {}; setDrafts({}); setUndo(null); setZoneIndex(0); setScreen("home");
     }
   }
@@ -231,11 +245,11 @@ export default function VistaApp() {
       onEdit={edit} onDelete={remove} onAction={toggleAction} />}
     {field && screen === "review" && <ReviewScreen field={field} busy={busy} recording={recording} drafts={drafts} onBack={() => setScreen("visit")} onZone={navigate} onAction={toggleAction}
       onClose={async () => { flushDrafts(); if (await write(() => closeFieldVisit(field.visit.id))) setUndo(null); }}
-      onReopen={async () => { if (await write(() => reopenFieldVisit(field.visit.id))) setScreen("visit"); }} onActions={() => setScreen("actions")} onReset={reset} />}
+      onReopen={async () => { if (await write(() => reopenFieldVisit(field.visit.id))) setScreen("visit"); }} onActions={() => setScreen("actions")} onReset={reset} onExport={async () => { flushDrafts(); if (await write(async () => {})) setExportOpen(true); }} />}
     {field && ["home", "visits", "actions"].includes(screen) && <>
       <header className="vista-header"><div className="vista-brand"><span className="vista-mark">V</span>VISTA</div><Saved busy={busy} error={error} label={online ? "À jour" : "Hors connexion"} /></header>
-      {screen === "home" && <HomeScreen field={field} onStart={start} showInstall={!installed && !installHidden} onInstall={install} onHideInstall={hideInstall} onSaveProperty={(property) => write(() => saveProperty(property))} onActions={() => setScreen("actions")} />}
-      {screen === "visits" && <section className="secondary-screen"><p className="eyebrow">Votre agenda</p><h1>Visites</h1><button className="list-card" onClick={start}><span className="date-tile">{new Intl.DateTimeFormat("fr-FR", { month: "short" }).format(new Date(field.visit.scheduledAt))}<strong>{new Date(field.visit.scheduledAt).getDate()}</strong></span><span><strong>{field.visit.propertyName}</strong><small>{field.visit.status === "completed" ? "Clôturée" : field.visit.status === "in_progress" ? "En cours" : "Planifiée"} · {field.observations.length} constats</small></span><ChevronRight aria-hidden="true" /></button></section>}
+      {screen === "home" && <HomeScreen field={field} onStart={start} showInstall={!installed && !installHidden} onInstall={install} onHideInstall={hideInstall} onSaveProperty={(property) => write(() => saveProperty(property))} onActions={() => setScreen("actions")} onNew={() => setSetupMode("new")} onRoute={() => { flushDrafts(); setSetupMode("route"); }} />}
+      {screen === "visits" && <section className="secondary-screen"><p className="eyebrow">Historique local</p><h1>Visites</h1><button className="secondary-action add-zone" onClick={() => setSetupMode("new")}>Nouvelle visite</button><div className="visit-history">{field.visits.map((item) => <button key={item.id} className="list-card" disabled={busy} onClick={async () => { flushDrafts(); if (await write(() => selectFieldVisit(item.id), true)) setScreen("home"); }}><span className="date-tile">{new Intl.DateTimeFormat("fr-FR", { month: "short" }).format(new Date(item.scheduledAt))}<strong>{new Date(item.scheduledAt).getDate()}</strong></span><span><strong>{item.propertyName}</strong><small>{item.status === "completed" ? "Clôturée" : item.status === "in_progress" ? "En cours" : "Planifiée"}{item.id === field.visit.id ? " · sélectionnée" : ""}</small></span><ChevronRight aria-hidden="true" /></button>)}</div></section>}
       {screen === "actions" && <ActionsScreen field={field} onSave={(action) => write(() => saveAction(action))} />}
       <nav className="bottom-nav" aria-label="Navigation principale">{([{ id: "home", label: "Accueil", Icon: House }, { id: "visits", label: "Visites", Icon: ClipboardList }, { id: "actions", label: "Actions", Icon: ListChecks }] as const).map(({ id, label, Icon }) => <button key={id} aria-current={screen === id ? "page" : undefined} className={screen === id ? "active" : ""} onClick={() => setScreen(id)}><Icon size={22} aria-hidden="true" /><span>{label}</span></button>)}</nav>
     </>}
@@ -243,6 +257,8 @@ export default function VistaApp() {
     <input ref={library} className="visually-hidden" type="file" accept="image/*" multiple aria-label="Importer des photos" onChange={importPhotos} />
     {undo && <div className="undo-toast" role="status">Constat supprimé<button onClick={async () => { if (Date.now() >= undo.expires) return; if (await write(() => restoreObservation(undo.observation, undo.action))) setUndo(null); }}>Annuler</button></div>}
     {zonesOpen && field && <Sheet title="Toutes les zones" onClose={() => setZonesOpen(false)}><h2>Zones</h2><p>{field.zones.filter((item) => item.status !== "pending").length} sur {ZONES.length} renseignées</p><ZoneList field={field} drafts={drafts} current={zoneIndex} onZone={navigate} /></Sheet>}
+    {setupMode && field && <Sheet title={setupMode === "new" ? "Nouvelle visite" : "Adapter le parcours"} onClose={() => setSetupMode(null)}><VisitSetup mode={setupMode} field={field} defaultRoute={DEFAULT_ZONES} onCreate={async (details, route) => { flushDrafts(); const ok = await write(async () => { await createFieldVisit(details, route); }, true); if (ok) { setSetupMode(null); setScreen("home"); } return ok; }} onSaveRoute={async (route) => { flushDrafts(); const ok = await write(() => saveVisitRoute(field.visit.id, route), true); if (ok) setSetupMode(null); return ok; }} /></Sheet>}
+    {exportOpen && field && <Sheet title="Compte rendu et sauvegarde" onClose={() => setExportOpen(false)}><VisitExport field={field} /></Sheet>}
     {installHelp && <Sheet title="Installer VISTA" onClose={() => setInstallHelp(false)}><span className="large-mark">V</span><h2>VISTA à portée de main</h2><p>Ajoutez l’application à l’écran d’accueil pour la lancer comme une app.</p><ol><li>Ouvrez VISTA dans Safari sur iPhone, ou votre navigateur habituel sur Android.</li><li>Dans le menu Partager ou ⋮, choisissez « Ajouter à l’écran d’accueil » ou « Installer ».</li><li>Lancez VISTA une première fois avec une connexion pour préparer le mode hors ligne.</li></ol><p>Les visites sont stockées sur cet appareil. Effacer les données du navigateur les supprime.</p><button className="primary-action" onClick={() => setInstallHelp(false)}>Compris<Check aria-hidden="true" /></button></Sheet>}
   </main>;
 }
@@ -307,6 +323,7 @@ function FieldScreen({ field, zoneIndex, draft, busy, error, online, recording, 
   onDraft: (changes: Partial<VistaDraft>) => void; onSubmit: () => void; onRecord: () => void; onPhoto: (kind: "camera" | "library") => void;
   onEdit: (item: VistaObservation) => void; onDelete: (item: VistaObservation) => void; onAction: (item: VistaObservation) => void;
 }) {
+  const ZONES = visitRoute(field);
   const zone = ZONES[zoneIndex]; const progress = field.zones[zoneIndex];
   const items = field.observations.filter((item) => item.zoneId === zone.id);
   const readonly = field.visit.status === "completed"; const content = hasContent(draft);
@@ -357,7 +374,7 @@ function FieldScreen({ field, zoneIndex, draft, busy, error, online, recording, 
   </section>;
 }
 
-function HomeScreen({ field, onStart, showInstall, onInstall, onHideInstall, onSaveProperty, onActions }: { field: VistaFieldState; onStart: () => void; showInstall: boolean; onInstall: () => void; onHideInstall: () => void; onSaveProperty: (property: VistaProperty) => Promise<boolean>; onActions: () => void }) {
+function HomeScreen({ field, onStart, showInstall, onInstall, onHideInstall, onSaveProperty, onActions, onNew, onRoute }: { field: VistaFieldState; onStart: () => void; showInstall: boolean; onInstall: () => void; onHideInstall: () => void; onSaveProperty: (property: VistaProperty) => Promise<boolean>; onActions: () => void; onNew: () => void; onRoute: () => void }) {
   const [editingProperty, setEditingProperty] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const { visit, zones, actions, property } = field;
@@ -366,7 +383,7 @@ function HomeScreen({ field, onStart, showInstall, onInstall, onHideInstall, onS
   const selected = field.observations.filter((item) => item.createAction).length;
   const phone = property.guardianPhone?.replace(/[^+\d]/g, "");
   const today = new Date(visit.scheduledAt).toDateString() === new Date().toDateString();
-  return <><section className="welcome-block"><p className="eyebrow">{formatDate(new Date().toISOString())}</p><h1>Bonjour Nicolas</h1><p>{today ? "1 visite aujourd’hui" : "1 visite planifiée"}</p></section>
+  return <><section className="welcome-block"><p className="eyebrow">{formatDate(new Date().toISOString())}</p><h1>{visit.managerName ? `Bonjour ${visit.managerName.split(" ")[0]}` : "Vos visites terrain"}</h1><p>{today ? "Visite sélectionnée aujourd’hui" : "Votre visite sélectionnée"}{visit.id === DEMO_VISIT_ID ? " · démonstration" : ""}</p><button className="text-button" onClick={onNew}>Nouvelle visite</button></section>
     <section className="visit-card"><div className="visit-card-topline"><span className="visit-tag">À {formatTime(visit.scheduledAt)}</span><span className="visit-type">{visit.status === "completed" ? "Visite clôturée" : "Visite technique"}</span></div><div className="residence-heading"><div><h2>{visit.propertyName}</h2><p>{visit.address}</p></div><a className="icon-button" href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(visit.address)}`} target="_blank" rel="noreferrer" aria-label="Itinéraire vers la résidence"><MapPin size={20} aria-hidden="true" /></a></div>
       <section className="property-access" aria-label="Accès et contacts de la copropriété"><div className="access-heading"><strong>Accès et contacts</strong><button className="text-button" onClick={() => setEditingProperty(true)}><Pencil size={16} aria-hidden="true" />{property.guardianName || property.guardianPhone || property.accessCodes || property.usefulInfo ? "Modifier les accès" : "Renseigner les accès"}</button></div>
         {property.guardianName || property.guardianPhone ? <div className="property-detail"><strong>Gardien</strong><div><span>{property.guardianName || "Contact de la résidence"}</span>{property.guardianPhone && (phone && /\d/.test(phone) ? <a className="guardian-phone" href={`tel:${phone}`}><Phone size={16} aria-hidden="true" />{property.guardianPhone}</a> : <span>{property.guardianPhone}</span>)}</div></div> : null}
@@ -375,7 +392,7 @@ function HomeScreen({ field, onStart, showInstall, onInstall, onHideInstall, onS
         {!property.guardianName && !property.guardianPhone && !property.accessCodes && !property.usefulInfo && <p className="access-empty">Ajoutez le gardien, son téléphone, les codes et les consignes utiles sur place.</p>}
       </section>
       <button className="property-followup" onClick={onActions}><ListChecks size={19} aria-hidden="true" /><span><strong>Suivi des actions</strong><small>{open ? `${open} action${open > 1 ? "s" : ""} ouverte${open > 1 ? "s" : ""} à vérifier` : "Aucune action ouverte"}{urgent ? ` · ${urgent} urgente${urgent > 1 ? "s" : ""}` : ""}</small>{visit.status !== "completed" && selected > 0 && <small>{selected} action(s) sélectionnée(s) pour la clôture de cette visite</small>}</span><ChevronRight size={19} aria-hidden="true" /></button>
-      <div className="zone-overview"><strong>{zones.length} zones</strong><span>Toiture → Sous-sol</span></div><Segments zones={zones} observations={field.observations} /><div className="severity-legend" aria-label="Repères de gravité"><span className="legend-urgent">Urgent</span><span className="legend-planned">À planifier</span><span className="legend-info">Pour info</span></div><button className="primary-action" onClick={onStart}>{visit.status === "completed" ? "Consulter la visite" : visit.status === "in_progress" ? "Reprendre la visite" : "Commencer la visite"}<ArrowRight size={20} aria-hidden="true" /></button>
+      <div className="zone-overview"><strong>{zones.length} zones</strong><span>{zones[0]?.zoneLabel} → {zones.at(-1)?.zoneLabel}</span></div><Segments zones={zones} observations={field.observations} /><div className="severity-legend" aria-label="Repères de gravité"><span className="legend-urgent">Urgent</span><span className="legend-planned">À planifier</span><span className="legend-info">Pour info</span></div>{visit.status !== "completed" && <button className="text-button route-edit-link" onClick={onRoute}><Pencil size={16} aria-hidden="true" />Adapter le parcours de cette visite</button>}<button className="primary-action" onClick={onStart}>{visit.status === "completed" ? "Consulter la visite" : visit.status === "in_progress" ? "Reprendre la visite" : "Commencer la visite"}<ArrowRight size={20} aria-hidden="true" /></button>
     </section>
     {showInstall && <aside className="install-card"><span className="install-icon"><Download size={22} aria-hidden="true" /></span><div><strong>Travailler sans réseau</strong><small>Installez VISTA sur l’écran d’accueil</small></div><button className="text-button" onClick={onInstall}>Installer</button><button className="plain-icon" aria-label="Masquer ce conseil" onClick={onHideInstall}><X size={18} aria-hidden="true" /></button></aside>}
     {editingProperty && <Sheet title="Accès de la copropriété" onClose={() => setEditingProperty(false)}><h2>Accès et contacts</h2><p>{property.name}</p><form onSubmit={async (event) => {
@@ -387,7 +404,7 @@ function HomeScreen({ field, onStart, showInstall, onInstall, onHideInstall, onS
   </>;
 }
 
-function ReviewScreen({ field, busy, recording, drafts, onBack, onZone, onAction, onClose, onReopen, onActions, onReset }: { field: VistaFieldState; busy: boolean; recording: boolean; drafts: Record<string, VistaDraft>; onBack: () => void; onZone: (index: number) => void; onAction: (item: VistaObservation) => void; onClose: () => Promise<void>; onReopen: () => Promise<void>; onActions: () => void; onReset: () => Promise<void> }) {
+function ReviewScreen({ field, busy, recording, drafts, onBack, onZone, onAction, onClose, onReopen, onActions, onReset, onExport }: { field: VistaFieldState; busy: boolean; recording: boolean; drafts: Record<string, VistaDraft>; onBack: () => void; onZone: (index: number) => void; onAction: (item: VistaObservation) => void; onClose: () => Promise<void>; onReopen: () => Promise<void>; onActions: () => void; onReset: () => Promise<void>; onExport: () => void }) {
   const [confirmation, setConfirmation] = useState<"close" | "reset" | null>(null);
   const { visit, zones, observations } = field; const readonly = visit.status === "completed";
   const pending = zones.filter((item) => item.status === "pending"); const selected = observations.filter((item) => item.createAction).length;
@@ -395,14 +412,15 @@ function ReviewScreen({ field, busy, recording, drafts, onBack, onZone, onAction
   const sorted = [...observations].sort((a, b) => ({ urgent: 0, planned: 1, info: 2 }[a.severity ?? "info"] - { urgent: 0, planned: 1, info: 2 }[b.severity ?? "info"]) || zones.findIndex((zone) => zone.zoneId === a.zoneId) - zones.findIndex((zone) => zone.zoneId === b.zoneId));
   const unsent = Object.values(drafts).filter(hasContent).length;
   return <section className="review-screen"><div className="review-top"><button className="text-button" onClick={onBack}><ArrowLeft size={18} aria-hidden="true" />Revenir à la visite</button><Saved busy={busy} error="" /></div><p className="eyebrow">Contrôle de fin de visite</p><h1>{readonly ? "Visite clôturée" : pending.length ? `Encore ${pending.length} zone${pending.length > 1 ? "s" : ""} à renseigner` : "Prêt à clôturer"}</h1><p className="review-intro">{visit.propertyName} · {readonly ? "lecture seule" : formatDate(visit.scheduledAt)}</p>
-    {readonly && <div className="closed-card"><Check size={24} aria-hidden="true" /><strong>Enregistrée sur l’appareil</strong><p>{field.actions.filter((item) => item.visitId === visit.id).length} action(s) dans le suivi. Le compte rendu PDF et l’envoi seront ajoutés dans un prochain lot.</p><div className="button-pair"><button className="primary-action" onClick={onActions}>Voir les actions<ArrowRight size={18} aria-hidden="true" /></button><button className="secondary-action" disabled={busy} onClick={onReopen}>Rouvrir</button></div></div>}
+    {readonly && <div className="closed-card"><Check size={24} aria-hidden="true" /><strong>Enregistrée sur l’appareil</strong><p>{field.actions.filter((item) => item.visitId === visit.id).length} action(s) dans le suivi. Relisez le compte rendu puis téléchargez le PDF pour votre messagerie.</p><button className="primary-action export-main" disabled={busy} onClick={onExport}>Compte rendu et sauvegarde<Download size={18} aria-hidden="true" /></button><div className="button-pair"><button className="secondary-action" onClick={onActions}>Voir les actions</button><button className="secondary-action" disabled={busy} onClick={onReopen}>Rouvrir</button></div></div>}
     {!readonly && pending.map((zone) => <div className="blocking-card" key={zone.id}><strong>{zone.zoneLabel} sans statut</strong><p>Indiquez « Rien à signaler », ajoutez un constat ou marquez la zone non accessible.</p><button onClick={() => onZone(zone.order)}>Compléter {zone.zoneLabel}<ArrowRight size={18} aria-hidden="true" /></button></div>)}
     <div className="review-grid"><div><strong>{zones.length - pending.length}/{zones.length}</strong><span>zones</span></div><div><strong className="observed-text">{observations.length}</strong><span>constats</span></div><div><strong className="urgent-text">{observations.filter((item) => item.severity === "urgent").length}</strong><span>urgents</span></div><div><strong className="inaccessible-text">{zones.filter((item) => item.status === "inaccessible").length}</strong><span>inaccessibles</span></div></div>
     <div className="section-title"><h2>Constats</h2>{!readonly && <small>{actionCopy}</small>}</div><div className="capture-feed review-feed">{sorted.map((item) => <ObservationCard key={item.id} item={item} readonly={readonly} onAction={onAction} showZone />)}{!sorted.length && <p className="muted">Aucun constat ajouté.</p>}</div>
     <div className="section-title"><h2>Zones</h2><small>{zones.length - pending.length}/{zones.length} renseignées</small></div><ZoneList field={field} drafts={drafts} onZone={onZone} />
     {!readonly && unsent > 0 && <p className="draft-warning">{unsent} brouillon(s) ne figurent pas parmi les constats. Ajoutez-les avant de clôturer s’ils doivent être pris en compte ; sinon ils resteront conservés pour une réouverture.</p>}
     {!readonly && (confirmation === "close" ? <div className="confirmation"><h2>Clôturer la visite ?</h2><p>{actionCopy} La visite passera en lecture seule ; vous pourrez la rouvrir.</p><div className="button-pair"><button className="secondary-action" onClick={() => setConfirmation(null)}>Annuler</button><button className="primary-action" disabled={busy || recording || pending.length > 0} onClick={async () => { await onClose(); setConfirmation(null); }}>Oui, clôturer<Check size={18} aria-hidden="true" /></button></div></div> : <><button className="primary-action review-primary" disabled={pending.length > 0 || busy || recording} onClick={() => setConfirmation("close")}>Clôturer la visite<Check size={20} aria-hidden="true" /></button><p className={pending.length ? "inaccessible-text" : "muted"}>{pending.length ? `Renseignez ${pending.length === 1 ? pending[0].zoneLabel : `${pending.length} zones`} pour clôturer.` : "Après clôture, la visite passe en lecture seule."}</p></>)}
-    {confirmation === "reset" ? <div className="confirmation"><h2>Réinitialiser la démonstration ?</h2><p>Cette visite, ses constats, ses brouillons et ses actions seront effacés de cet appareil. Cette opération est irréversible.</p><div className="button-pair"><button className="secondary-action" onClick={() => setConfirmation(null)}>Annuler</button><button className="primary-action" disabled={busy} onClick={onReset}>Effacer la démo</button></div></div> : <button className="danger-link" onClick={() => setConfirmation("reset")}>Réinitialiser la démonstration</button>}
+    {!readonly && <button className="secondary-action add-zone" disabled={busy || recording} onClick={onExport}>Sauvegarder la visite en cours<Download size={18} aria-hidden="true" /></button>}
+    {visit.id === DEMO_VISIT_ID && (confirmation === "reset" ? <div className="confirmation"><h2>Réinitialiser la démonstration ?</h2><p>Les données de cette visite de démonstration seront effacées. Les autres visites seront conservées.</p><div className="button-pair"><button className="secondary-action" onClick={() => setConfirmation(null)}>Annuler</button><button className="primary-action" disabled={busy} onClick={onReset}>Effacer la démo</button></div></div> : <button className="danger-link" onClick={() => setConfirmation("reset")}>Réinitialiser la démonstration</button>)}
   </section>;
 }
 

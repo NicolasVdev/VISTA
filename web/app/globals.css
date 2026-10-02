@@ -507,3 +507,31 @@ p { margin: 0 0 12px; }
 .property-followup strong { font-size: 14px; } .property-followup small { color: var(--muted); font-size: 13px; }
 .form-field textarea { width: 100%; min-height: 86px; padding: 10px; resize: vertical; border: 1px solid var(--line); border-radius: 12px; color: var(--foreground); background: var(--background); font-size: 16px; }
 .privacy-note { color: var(--muted); font-size: 13px; }
+.visit-setup fieldset { padding: 0; border: 0; margin: 0; min-width: 0; }
+.visit-setup .section-title h3 { margin: 0; font-size: 18px; }
+.route-editor { display: grid; gap: 12px; }
+.route-editor-row { padding: 12px; border: 1px solid var(--line); border-radius: 16px; background: var(--background); }
+.route-editor-row .form-field { margin: 4px 0 10px; font-size: 13px; }
+.route-editor-row input { background: var(--surface); font-size: 16px; }
+.route-editor-tools { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.route-editor-tools small { color: var(--muted); font-size: 12px; flex: 1; }
+.route-editor-tools button:disabled { opacity: .4; }
+.add-zone { width: 100%; margin: 16px 0; }
+.visit-history { display: grid; gap: 12px; }
+.route-edit-link { margin: 0 0 10px; }
+.export-summary { padding: 16px; border: 1px solid var(--line); border-radius: 16px; background: var(--background); }
+.export-summary > svg { vertical-align: middle; margin-right: 8px; }
+.export-summary p { margin: 10px 0 0; font-size: 14px; color: var(--muted); }
+.export-review { display: flex; align-items: start; gap: 10px; min-height: 44px; margin: 18px 0; font-size: 14px; }
+.export-review input { width: 20px; height: 20px; flex-shrink: 0; accent-color: var(--brand); }
+.export-blockers { padding: 12px; margin-top: 12px; border-radius: 12px; color: var(--sev-urgent-fg); background: var(--sev-urgent-bg); font-size: 14px; }
+.export-blockers p:last-child { margin-bottom: 0; }
+.export-backup { padding-top: 18px; margin-top: 22px; border-top: 1px solid var(--line); }
+.export-backup h3 { font-size: 16px; margin: 0 0 8px; }
+.export-backup p { font-size: 14px; color: var(--muted); }
+.export-backup button { width: 100%; }
+.prepared-export { display: grid; gap: 12px; padding: 16px; margin-top: 20px; border-radius: 16px; background: var(--brand-soft); }
+.prepared-export small { overflow-wrap: anywhere; color: var(--muted); }
+.prepared-export a { text-decoration: none; }
+.prepared-export p { margin: 0; font-size: 13px; color: var(--muted); }
+.export-main { margin-bottom: 12px; }

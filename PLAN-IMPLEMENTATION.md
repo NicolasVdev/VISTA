@@ -9,6 +9,37 @@ Construire et tester sur une copropriété pilote une application autonome couvr
 
 `notes vocales courtes + photos → transcription → constats validés → compte rendu CS + tâches syndic`
 
+## Priorité pilote — mardi 6 octobre 2026
+
+Le pilote terrain remplace temporairement la priorité backend généraliste. Ne pas imposer une configuration complète de copropriété au gestionnaire.
+
+### Lot A — parcours et identité (implémenté localement)
+
+- [x] Nouvelle visite avec résidence, adresse, gestionnaire et date.
+- [x] Renommer, ajouter, réordonner et retirer les zones vides de la trame.
+- [x] Protéger les constats et leurs médias lors des changements de parcours.
+- [x] Historique local et parcours indépendant pour chaque visite.
+- [x] Migration IndexedDB sans effacement des visites précédentes.
+
+### Lot B — restitution et sauvegarde (implémenté localement)
+
+- [x] PDF avec constats, urgences, photos légendées, zones non accessibles et actions.
+- [x] Relecture obligatoire et téléchargement, partage si disponible.
+- [x] Archive ZIP des données et médias originaux, brouillons compris.
+- [x] Exclure codes d'accès et contacts privés des exports.
+- [x] Précacher les bibliothèques d'export pour usage hors connexion.
+- [ ] Réimporter une archive dans VISTA (hors périmètre initial du pilote).
+
+### Lot C — conditions de mise à disposition
+
+- [ ] Raccorder une transcription sécurisée côté serveur, après choix du fournisseur et configuration des accès. Aucun secret dans le frontend.
+- [ ] Vérifier capture caméra, import, micro, reprise et export sur le téléphone réel du gestionnaire.
+- [ ] Publier après autorisation et vérifier le déploiement HTTPS et la mise à jour PWA.
+- [ ] Simuler une visite complète, faire relire son PDF et vérifier sa réception par mail.
+- [ ] Fournir une consigne courte : installation, visite, sauvegarde, envoi et limites.
+
+En attendant la transcription automatique, les notes sont conservées et écoutables mais leur texte doit être saisi manuellement pour le PDF. Cette limite doit être annoncée au testeur : ce n'est pas encore la chaîne vocale automatisée cible. La version locale ne synchronise pas téléphone et ordinateur ; transférer le PDF/ZIP depuis le téléphone pour les reprendre au bureau. Aucune garantie iPhone/Android avant essais physiques.
+
 ## Principes techniques
 
 - Interface mobile-first utilisable pendant la visite.

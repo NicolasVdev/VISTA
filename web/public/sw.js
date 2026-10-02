@@ -1,5 +1,5 @@
-const CACHE_NAME = "vista-shell-v3";
-const APP_SHELL = ["/", "/offline.html", "/manifest.webmanifest", "/icon-192.png", "/icon-512.png", "/fonts/figtree-latin-wght-normal.woff2", "/fonts/figtree-latin-ext-wght-normal.woff2"];
+const CACHE_NAME = "vista-shell-v4";
+const APP_SHELL = ["/", "/offline.html", "/manifest.webmanifest", "/icon-192.png", "/icon-512.png", "/fonts/figtree-latin-wght-normal.woff2", "/fonts/figtree-latin-ext-wght-normal.woff2", "/vendor/pdf-lib.min.js", "/vendor/jszip.min.js"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil((async () => {

@@ -23,9 +23,15 @@ Application terrain installable de visites techniques d'immeubles.
 - accès de copropriété éditables : gardien, téléphone appelable, codes et consignes ;
 - suivi des actions toujours visible sur l'accueil, avec les urgences ;
 - pastilles et progression colorées selon la gravité maximale des constats ;
-- police Figtree hébergée et précachée dans l'application.
+- police Figtree hébergée et précachée dans l'application ;
+- nouvelles visites avec résidence, adresse, gestionnaire et date ;
+- parcours indépendant par visite : ajout, renommage, ordre et suppression des zones vides ;
+- historique local des visites, sans modification des parcours précédents ;
+- PDF relu, téléchargeable avec photos légendées, statuts et actions ;
+- sauvegarde ZIP avec données structurées, médias originaux et brouillons ;
+- partage du fichier lorsque le navigateur propose le partage de fichiers.
 
-La synchronisation serveur, l'authentification, la transcription IA et le PDF ne sont pas encore connectés.
+La synchronisation serveur, l'authentification et la transcription IA ne sont pas encore connectées. Les audios doivent être écoutés et leur texte complété manuellement pour le PDF. Aucun envoi automatique de mail : télécharger le PDF, le vérifier puis le joindre depuis sa messagerie habituelle. Les tests physiques iPhone/Android restent à faire avant le pilote.
 
 ## Développement
 
@@ -61,8 +67,13 @@ explicite permet de les modifier. Les actions restent modifiables après clôtur
 
 La version 4 ajoute `properties`, indépendant des visites, et leur identifiant de
 copropriété. Les anciens `accessNotes` sont repris en informations utiles. Le reset
-de la visite démo conserve cette fiche. L'interface montre encore une seule résidence ;
-la gestion d'un portefeuille de copropriétés reste un futur lot.
+de la visite démo conserve cette fiche.
+
+La version 5 ajoute la sélection de visite (`settings`). Les parcours personnalisés sont des instantanés : ils ne sont pas recréés à partir de la trame démo au redémarrage. Une zone contenant des constats, actions ou brouillons ne peut pas être supprimée. Une nouvelle visite reprend la fiche copropriété si son nom et son adresse correspondent exactement (hors casse). Le reset démo ne supprime pas les visites réelles. La configuration complète d'un portefeuille de copropriétés reste un futur lot.
+
+Les exports sont produits localement grâce à pdf-lib et JSZip, précachés avec leurs licences dans `public/vendor/`. Le PDF ne contient pas les audios ni les brouillons ; les audios sans texte bloquent sa préparation. Les photos exportées sont redimensionnées et converties en JPEG, sans modifier les originaux. Une photo non décodable (par exemple certains HEIC) provoque une erreur explicite : importer une version JPEG/PNG. Le ZIP conserve les fichiers originaux, mais son import dans l'application reste à implémenter. Les accès privés et contacts sont exclus des deux exports.
+
+Attention : les données restent sur ce navigateur et cet appareil. Elles ne seront pas accessibles automatiquement depuis le PC au retour au bureau. Exporter la sauvegarde et le PDF depuis le téléphone, puis transférer les fichiers. Ne pas effacer les données du navigateur avant cette sauvegarde.
 
 Les codes d'accès et les contacts sont des données sensibles : ils restent dans
 le navigateur local, sans chiffrement applicatif ni droits utilisateurs pour ce
