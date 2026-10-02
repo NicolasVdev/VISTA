@@ -111,3 +111,47 @@ Conséquences :
 La barre de saisie suit une messagerie mobile : micro permanent, menu « + » pour la prise ou l'import de photos, flèche vers la droite pour enregistrer. Le texte reste utilisable seul ; avec des médias, il sert de titre ou commentaire facultatif. Les icônes utilisent Lucide React. Le composeur suit le viewport visible, avec contenu défilant séparément et sans espace fixe réservé au clavier.
 
 Le modèle cible permet de configurer une copropriété et ses bâtiments, niveaux, espaces et équipements pour générer son parcours. La fiche sera éditable sur mobile avec des formulaires simples. Une visite conserve une copie de son parcours, afin de préserver l'historique lors d'un changement de configuration. Le modèle proposé et ses étapes de livraison sont décrits dans [MODELE-COPROPRIETES.md](MODELE-COPROPRIETES.md). Cette configuration n'est pas encore implémentée dans la démo.
+
+## 2026-10-02 — Refonte du parcours terrain
+
+Le brief `vista-refonte-ux/refonte-ux.md` remplace le choix visuel du 1er octobre :
+menu photo à gauche, micro lorsque le brouillon est vide, coche d'ajout lorsqu'il
+contient du contenu. Pour conserver la combinaison texte + voix + photos, le menu
+propose aussi l'ajout ou le remplacement d'une note vocale.
+
+La navigation entre zones est libre. Les brouillons texte, audio et photo sont
+conservés par zone dans IndexedDB. Les brouillons non ajoutés restent distincts
+des constats ; ils sont signalés au contrôle de fin, sans bloquer la clôture.
+
+Les constats ont une gravité et une option de création d'action. Une modification
+garde le même identifiant ; une suppression peut être annulée pendant 5 secondes.
+Le dernier constat supprimé remet sa zone à contrôler. Les motifs de non-accès
+restent facultatifs.
+
+La clôture est transactionnelle, crée les actions sélectionnées avec un identifiant
+stable et passe la visite en lecture seule. Une réouverture est explicite. Une
+nouvelle clôture préserve les actions déjà faites, leur intervenant et leur échéance,
+et retire les actions ouvertes qui ne sont plus sélectionnées.
+
+La démo n'annonce aucun envoi automatique de compte rendu : synchronisation, IA,
+PDF, comptes utilisateurs et configuration des copropriétés restent hors de ce lot.
+La police Figtree est auto-hébergée et précachée pour le mode hors ligne.
+Le téléchargement et la publication GitHub/Render ont été autorisés par l'utilisateur.
+
+### Accès de copropriété et repères de gravité
+
+Une fiche `properties` distincte de la visite conserve le contact du gardien,
+son téléphone, les codes d'accès et les informations utiles. Ces renseignements
+restent éditables après clôture et ne sont pas effacés lors du reset de la visite
+de démonstration. La démo conserve une seule copropriété affichée ; le magasin
+utilise des identifiants de copropriété pour préparer le futur portefeuille.
+
+Le suivi des actions est toujours affiché sur l'accueil, y compris à zéro. Les
+actions déjà ouvertes sont distinguées des actions sélectionnées dans une visite
+non clôturée. Les pastilles de zone et les segments de progression prennent la
+gravité maximale de leurs constats : rouge urgent, ocre à planifier, bleu pour info.
+Vert reste réservé à « Rien à signaler » et orange clair à « Non accessible ».
+
+Les accès sont stockés localement, sans chiffrement applicatif ni contrôle des
+rôles dans la démo. Avant l'utilisation de codes réels en production, prévoir les
+droits de consultation et une protection adaptée des appareils et du stockage.

@@ -7,15 +7,23 @@ Application terrain installable de visites techniques d'immeubles.
 - installation sur l'écran d'accueil avec icône VISTA ;
 - affichage autonome et responsive ;
 - parcours de visite de la toiture au sous-sol ;
-- observations regroupant texte, note vocale et plusieurs photos ;
+- constats regroupant texte, note vocale et plusieurs photos ;
 - plusieurs notes vocales courtes ;
 - prise de photo ou import multiple depuis la photothèque ;
 - conservation locale dans IndexedDB ;
-- statut obligatoire pour chaque zone : observation, rien à signaler ou non accessible ;
+- navigation libre et accès direct aux zones, avec brouillons texte/audio/photos conservés par zone ;
+- gravité des constats, modification du même constat, suppression avec annulation pendant 5 secondes ;
+- statuts : constat, rien à signaler ou non accessible, avec motif facultatif ;
 - reprise de la visite après fermeture de l'application ;
 - cache applicatif hors connexion ;
 - clôture impossible tant qu'une zone reste à contrôler ;
-- écran de synthèse préparant la future génération du compte rendu.
+- contrôle de fin, confirmation de clôture, lecture seule et réouverture ;
+- création des actions de suivi à la clôture, sans doublons après réouverture ;
+- filtres des actions, intervenant, échéance et statut fait/à faire.
+- accès de copropriété éditables : gardien, téléphone appelable, codes et consignes ;
+- suivi des actions toujours visible sur l'accueil, avec les urgences ;
+- pastilles et progression colorées selon la gravité maximale des constats ;
+- police Figtree hébergée et précachée dans l'application.
 
 La synchronisation serveur, l'authentification, la transcription IA et le PDF ne sont pas encore connectés.
 
@@ -37,6 +45,32 @@ pnpm lint
 pnpm build
 pnpm test
 ```
+
+`pnpm test` vérifie le build statique. Il exécute également les tests navigateur
+si Playwright est installé (sinon ils sont signalés comme ignorés). Pour utiliser
+le runtime fourni par Codex sans ajouter de dépendance au projet, définir
+`VISTA_PLAYWRIGHT_ROOT` vers son dossier `node_modules` et `VISTA_BROWSER_PATH`
+vers un exécutable Chrome/Chromium. Les tests utilisent un profil isolé et un
+serveur local temporaire, jamais les données du navigateur personnel.
+
+La base IndexedDB passe de la version 2 à la version 3 sans effacement : elle
+ajoute les stores `actions` et `drafts`. Les anciens constats ont la gravité
+« Pour info » et ne créent pas d’action par défaut. Les constats et les statuts
+d’une visite clôturée sont protégés dans la couche données. Seule une réouverture
+explicite permet de les modifier. Les actions restent modifiables après clôture.
+
+La version 4 ajoute `properties`, indépendant des visites, et leur identifiant de
+copropriété. Les anciens `accessNotes` sont repris en informations utiles. Le reset
+de la visite démo conserve cette fiche. L'interface montre encore une seule résidence ;
+la gestion d'un portefeuille de copropriétés reste un futur lot.
+
+Les codes d'accès et les contacts sont des données sensibles : ils restent dans
+le navigateur local, sans chiffrement applicatif ni droits utilisateurs pour ce
+pilote. Ne pas utiliser des codes réels sur un appareil partagé. Aucun code ni
+contact réel n'est inclus dans le dépôt.
+
+Les brouillons non ajoutés ne figurent ni dans les constats ni dans les actions.
+Le contrôle de fin les signale ; ils restent disponibles si la visite est rouverte.
 
 ## Installation sur téléphone
 

@@ -1,869 +1,418 @@
 "use client";
 
-import { ChangeEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, Ban, Camera, Check, ClipboardList, Download, House, Images, ListChecks, LoaderCircle, Mic, Plus, Square, X } from "lucide-react";
-import {
-  loadFieldState,
-  resetFieldState,
-  saveObservation,
-  saveVisit,
-  saveZoneProgress,
-  type VistaMedia,
-  type VistaObservation,
-  type VistaVisit,
-  type VistaZoneProgress,
-  type ZoneStatus,
-  type ZoneTemplate,
-} from "./lib/vista-db";
+import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState, type ChangeEvent, type ReactNode } from "react";
+import { ArrowLeft, ArrowRight, Ban, Camera, Check, ChevronDown, ChevronRight, CircleAlert, ClipboardList, Download, House, Images, ListChecks, LoaderCircle, MapPin, Mic, Pencil, Phone, Square, Trash2, X } from "lucide-react";
+import { closeFieldVisit, deleteObservation, loadFieldState, reopenFieldVisit, resetFieldState, restoreObservation, saveAction, saveDraft, saveObservation, saveProperty, saveVisit, saveZoneProgress, type FollowUpAction, type InaccessibleReason, type Severity, type VistaDraft, type VistaFieldState, type VistaMedia, type VistaObservation, type VistaProperty, type VistaZoneProgress, type ZoneStatus, type ZoneTemplate } from "./lib/vista-db";
 
 type Screen = "home" | "visits" | "actions" | "visit" | "review";
-type MediaView = VistaMedia & { previewUrl: string };
-type ObservationView = Omit<VistaObservation, "audio" | "photos"> & {
-  audio?: MediaView;
-  photos: MediaView[];
-};
-
-type InstallPrompt = Event & {
-  prompt: () => Promise<void>;
-  userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
-};
-
+type InstallPrompt = Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: string }> };
 const ZONES: ZoneTemplate[] = [
   { id: "toiture", label: "Toiture", hint: "Étanchéité, évacuations, équipements" },
-  { id: "etage-6", label: "6e étage", hint: "Palier, éclairage, portes, murs" },
-  { id: "etage-5", label: "5e étage", hint: "Palier, éclairage, portes, murs" },
-  { id: "etage-4", label: "4e étage", hint: "Palier, éclairage, portes, murs" },
-  { id: "etage-3", label: "3e étage", hint: "Palier, éclairage, portes, murs" },
-  { id: "etage-2", label: "2e étage", hint: "Palier, éclairage, portes, murs" },
-  { id: "etage-1", label: "1er étage", hint: "Palier, éclairage, portes, murs" },
+  ...[6, 5, 4, 3, 2, 1].map((floor) => ({ id: `etage-${floor}`, label: floor === 1 ? "1er étage" : `${floor}e étage`, hint: "Palier, éclairage, portes, murs" })),
   { id: "rdc", label: "Rez-de-chaussée", hint: "Hall, boîtes aux lettres, accès" },
   { id: "sous-sol", label: "Sous-sol & parking", hint: "Sas, caves, parkings, électricité" },
 ];
-
-const STATUS_LABELS: Record<ZoneStatus, string> = {
-  pending: "À contrôler",
-  clear: "Rien à signaler",
-  observed: "Observation ajoutée",
-  inaccessible: "Non accessible",
-};
-
-function formatTime(value: string) {
-  return new Intl.DateTimeFormat("fr-FR", { hour: "2-digit", minute: "2-digit" }).format(new Date(value));
-}
-
-function formatVisitDate(value: string) {
-  return new Intl.DateTimeFormat("fr-FR", {
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-  }).format(new Date(value));
-}
-
-function durationLabel(seconds: number) {
-  const minutes = Math.floor(seconds / 60);
-  return `${minutes}:${String(seconds % 60).padStart(2, "0")}`;
-}
-
-function isIosDevice() {
-  if (typeof navigator === "undefined") return false;
-  return /iphone|ipad|ipod/i.test(navigator.userAgent);
-}
-
-function isStandalone() {
-  if (typeof window === "undefined") return false;
-  const navigatorWithStandalone = navigator as Navigator & { standalone?: boolean };
-  return window.matchMedia("(display-mode: standalone)").matches || navigatorWithStandalone.standalone === true;
-}
-
-function mediaWithPreview(media: VistaMedia): MediaView {
-  return { ...media, previewUrl: URL.createObjectURL(media.blob) };
-}
-
-function observationWithPreviews(observation: VistaObservation): ObservationView {
-  return {
-    ...observation,
-    audio: observation.audio ? mediaWithPreview(observation.audio) : undefined,
-    photos: observation.photos.map(mediaWithPreview),
-  };
-}
-
-function storedMedia(media: MediaView): VistaMedia {
-  return {
-    id: media.id,
-    blob: media.blob,
-    mimeType: media.mimeType,
-    fileName: media.fileName,
-    createdAt: media.createdAt,
-  };
-}
-
-function revokeObservationUrls(observations: ObservationView[]) {
-  observations.forEach((observation) => {
-    if (observation.audio) URL.revokeObjectURL(observation.audio.previewUrl);
-    observation.photos.forEach((photo) => URL.revokeObjectURL(photo.previewUrl));
-  });
+const STATUS: Record<ZoneStatus, string> = { pending: "À contrôler", clear: "Rien à signaler", observed: "Constat", inaccessible: "Non accessible" };
+const SEVERITY: Record<Severity, string> = { urgent: "Urgent", planned: "À planifier", info: "Pour info" };
+const REASONS: Record<InaccessibleReason, string> = { missing_key: "Clé ou badge manquant", locked: "Local fermé", occupant_absent: "Occupant absent", unsafe: "Accès dangereux", other: "Autre" };
+const formatDate = (value: string) => new Intl.DateTimeFormat("fr-FR", { weekday: "long", day: "numeric", month: "long" }).format(new Date(value));
+const formatTime = (value: string) => new Intl.DateTimeFormat("fr-FR", { hour: "2-digit", minute: "2-digit" }).format(new Date(value));
+const hasContent = (draft?: VistaDraft) => Boolean(draft && (draft.text.trim() || draft.audio || draft.photos.length));
+const emptyDraft = (visitId: string, zoneId: string): VistaDraft => ({ id: `${visitId}:${zoneId}`, visitId, zoneId, text: "", severity: "planned", photos: [] });
+function zoneSeverity(observations: VistaObservation[], zoneId: string): Severity | undefined {
+  const items = observations.filter((item) => item.zoneId === zoneId);
+  return items.some((item) => item.severity === "urgent") ? "urgent" : items.some((item) => item.severity === "planned") ? "planned" : items.length ? "info" : undefined;
 }
 
 export default function VistaApp() {
+  const [field, setField] = useState<VistaFieldState | null>(null);
   const [screen, setScreen] = useState<Screen>("home");
-  const [online, setOnline] = useState(() => typeof navigator === "undefined" ? true : navigator.onLine);
-  const [visit, setVisit] = useState<VistaVisit | null>(null);
-  const [zoneProgress, setZoneProgress] = useState<VistaZoneProgress[]>([]);
-  const [observations, setObservations] = useState<ObservationView[]>([]);
   const [zoneIndex, setZoneIndex] = useState(0);
-  const [draft, setDraft] = useState("");
-  const [draftAudio, setDraftAudio] = useState<MediaView | null>(null);
-  const [draftPhotos, setDraftPhotos] = useState<MediaView[]>([]);
+  const [drafts, setDrafts] = useState<Record<string, VistaDraft>>({});
+  const draftRef = useRef<Record<string, VistaDraft>>({});
+  const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const queue = useRef(Promise.resolve());
+  const [writes, setWrites] = useState(0);
+  const [draftPending, setDraftPending] = useState(false);
+  const [error, setError] = useState("");
+  const [online, setOnline] = useState(navigator.onLine);
+  const [zonesOpen, setZonesOpen] = useState(false);
+  const [leftPending, setLeftPending] = useState<number | null>(null);
+  const [undo, setUndo] = useState<{ observation: VistaObservation; action?: FollowUpAction; expires: number } | null>(null);
   const [recording, setRecording] = useState(false);
-  const [recordingSeconds, setRecordingSeconds] = useState(0);
-  const [saving, setSaving] = useState(false);
+  const [seconds, setSeconds] = useState(0);
+  const recorder = useRef<MediaRecorder | null>(null);
+  const recordingStarting = useRef(false);
+  const mounted = useRef(true);
+  const camera = useRef<HTMLInputElement>(null);
+  const library = useRef<HTMLInputElement>(null);
+  const mediaZone = useRef("");
   const [installPrompt, setInstallPrompt] = useState<InstallPrompt | null>(null);
-  const [showInstallHelp, setShowInstallHelp] = useState(false);
-  const [installed, setInstalled] = useState(() => typeof window !== "undefined" && isStandalone());
-  const recorderRef = useRef<MediaRecorder | null>(null);
-  const recorderStreamRef = useRef<MediaStream | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
-  const cameraRef = useRef<HTMLInputElement | null>(null);
-  const libraryRef = useRef<HTMLInputElement | null>(null);
-
-  const currentZone = ZONES[zoneIndex];
-  const currentZoneProgress = zoneProgress.find((zone) => zone.zoneId === currentZone.id);
-  const currentZoneObservations = useMemo(
-    () => observations.filter((observation) => observation.zoneId === currentZone.id),
-    [observations, currentZone.id],
-  );
-  const completedZoneCount = zoneProgress.filter((zone) => zone.status !== "pending").length;
-  const pendingSyncCount = observations.filter((observation) => observation.syncStatus === "local").length;
-  const hasDraft = Boolean(draft.trim() || draftAudio || draftPhotos.length);
-  const storageReady = Boolean(visit && zoneProgress.length === ZONES.length);
+  const [installHelp, setInstallHelp] = useState(false);
+  const [installed, setInstalled] = useState(() => matchMedia("(display-mode: standalone)").matches || Boolean((navigator as Navigator & { standalone?: boolean }).standalone));
+  const [installHidden, setInstallHidden] = useState(() => { try { return localStorage.getItem("vista-install-hidden") === "1"; } catch { return false; } });
+  const visit = field?.visit;
+  const zone = ZONES[zoneIndex];
+  const draft = visit ? drafts[zone.id] ?? emptyDraft(visit.id, zone.id) : undefined;
+  const readonly = visit?.status === "completed";
+  const busy = writes > 0 || draftPending;
 
   useEffect(() => {
-    const onOnline = () => setOnline(true);
-    const onOffline = () => setOnline(false);
-    const onInstallPrompt = (event: Event) => {
-      event.preventDefault();
-      setInstallPrompt(event as InstallPrompt);
-    };
-    window.addEventListener("online", onOnline);
-    window.addEventListener("offline", onOffline);
-    window.addEventListener("beforeinstallprompt", onInstallPrompt);
-
-    if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.register("/sw.js").catch(() => undefined);
-    }
-
-    loadFieldState(ZONES)
-      .then((state) => {
-        setVisit(state.visit);
-        setZoneProgress(state.zones);
-        setObservations(state.observations.map(observationWithPreviews));
-        const savedIndex = ZONES.findIndex((zone) => zone.id === state.visit.currentZoneId);
-        setZoneIndex(savedIndex >= 0 ? savedIndex : 0);
-      })
-      .catch(() => window.alert("Le stockage local de VISTA n’a pas pu être initialisé."));
-
+    mounted.current = true;
+    const onOnline = () => setOnline(navigator.onLine);
+    const onInstall = (event: Event) => { event.preventDefault(); setInstallPrompt(event as InstallPrompt); };
+    const onInstalled = () => setInstalled(true);
+    window.addEventListener("online", onOnline); window.addEventListener("offline", onOnline);
+    window.addEventListener("beforeinstallprompt", onInstall); window.addEventListener("appinstalled", onInstalled);
+    if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+    loadFieldState(ZONES).then((state) => {
+      if (!mounted.current) return;
+      setField(state);
+      draftRef.current = Object.fromEntries(state.drafts.map((item) => [item.zoneId, item]));
+      setDrafts(draftRef.current);
+      setZoneIndex(Math.max(0, ZONES.findIndex((item) => item.id === state.visit.currentZoneId)));
+    }).catch(() => setError("Le stockage local n’est pas disponible. Vérifiez les autorisations du navigateur."));
     return () => {
-      window.removeEventListener("online", onOnline);
-      window.removeEventListener("offline", onOffline);
-      window.removeEventListener("beforeinstallprompt", onInstallPrompt);
+      mounted.current = false;
+      window.removeEventListener("online", onOnline); window.removeEventListener("offline", onOnline);
+      window.removeEventListener("beforeinstallprompt", onInstall); window.removeEventListener("appinstalled", onInstalled);
+      recorder.current?.stream.getTracks().forEach((track) => track.stop());
     };
   }, []);
 
   useEffect(() => {
     if (!recording) return;
-    const timer = window.setInterval(() => setRecordingSeconds((value) => value + 1), 1000);
-    return () => window.clearInterval(timer);
+    const interval = setInterval(() => setSeconds((value) => value + 1), 1000);
+    return () => clearInterval(interval);
   }, [recording]);
-
-  async function updateVisit(values: Partial<VistaVisit>) {
-    if (!visit) return;
-    const nextVisit = { ...visit, ...values, updatedAt: new Date().toISOString() };
-    setVisit(nextVisit);
-    await saveVisit(nextVisit);
-  }
-
-  async function updateZoneStatus(status: ZoneStatus) {
-    if (!currentZoneProgress) return;
-    if (currentZoneObservations.length > 0 && status !== "observed") {
-      window.alert("Cette zone contient déjà une observation. Son statut reste « Observation ajoutée ».");
-      return;
-    }
-    const updated = { ...currentZoneProgress, status, updatedAt: new Date().toISOString() };
-    setZoneProgress((zones) => zones.map((zone) => zone.id === updated.id ? updated : zone));
-    await saveZoneProgress(updated);
-  }
-
-  async function startVisit() {
-    if (!visit) return;
-    if (visit.status === "completed") {
-      setScreen("review");
-      return;
-    }
-    if (visit.status === "planned") await updateVisit({ status: "in_progress" });
-    setScreen("visit");
-  }
-
-  async function submitObservation() {
-    if (!visit || !hasDraft || saving || recording) return;
-    setSaving(true);
-    const now = new Date().toISOString();
-    const observation: VistaObservation = {
-      id: crypto.randomUUID(),
-      visitId: visit.id,
-      zoneId: currentZone.id,
-      zoneLabel: currentZone.label,
-      createdAt: now,
-      updatedAt: now,
-      text: draft.trim() || undefined,
-      audio: draftAudio ? storedMedia(draftAudio) : undefined,
-      photos: draftPhotos.map(storedMedia),
-      syncStatus: "local",
-    };
-
-    try {
-      await saveObservation(observation);
-      setObservations((items) => [...items, {
-        ...observation,
-        audio: draftAudio ?? undefined,
-        photos: draftPhotos,
-      }]);
-      setDraft("");
-      setDraftAudio(null);
-      setDraftPhotos([]);
-      await updateZoneStatus("observed");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function toggleRecording() {
-    if (recording) {
-      recorderRef.current?.stop();
-      return;
-    }
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
-      audioChunksRef.current = [];
-      recorderStreamRef.current = stream;
-      recorderRef.current = recorder;
-      recorder.ondataavailable = (event) => {
-        if (event.data.size > 0) audioChunksRef.current.push(event.data);
-      };
-      recorder.onstop = () => {
-        const createdAt = new Date().toISOString();
-        const mimeType = recorder.mimeType || "audio/webm";
-        const blob = new Blob(audioChunksRef.current, { type: mimeType });
-        recorderStreamRef.current?.getTracks().forEach((track) => track.stop());
-        setRecording(false);
-        setRecordingSeconds(0);
-        setDraftAudio((previous) => {
-          if (previous) URL.revokeObjectURL(previous.previewUrl);
-          return {
-            id: crypto.randomUUID(),
-            blob,
-            mimeType,
-            fileName: `note-${Date.now()}.webm`,
-            createdAt,
-            previewUrl: URL.createObjectURL(blob),
-          };
-        });
-      };
-      recorder.start();
-      setRecordingSeconds(0);
-      setRecording(true);
-    } catch {
-      window.alert("VISTA a besoin de l’autorisation du microphone pour enregistrer une note vocale.");
-    }
-  }
-
-  function importPhotos(event: ChangeEvent<HTMLInputElement>) {
-    const files = Array.from(event.target.files ?? []);
-    event.target.value = "";
-    if (files.length === 0) return;
-    const imported = files.map((file): MediaView => ({
-      id: crypto.randomUUID(),
-      blob: file,
-      mimeType: file.type,
-      fileName: file.name,
-      createdAt: new Date().toISOString(),
-      previewUrl: URL.createObjectURL(file),
-    }));
-    setDraftPhotos((photos) => [...photos, ...imported]);
-  }
-
-  function removeDraftAudio() {
-    if (draftAudio) URL.revokeObjectURL(draftAudio.previewUrl);
-    setDraftAudio(null);
-  }
-
-  function removeDraftPhoto(id: string) {
-    setDraftPhotos((photos) => {
-      const removed = photos.find((photo) => photo.id === id);
-      if (removed) URL.revokeObjectURL(removed.previewUrl);
-      return photos.filter((photo) => photo.id !== id);
-    });
-  }
-
-  function canLeaveZone() {
-    if (recording || hasDraft) {
-      window.alert("Enregistrez l’observation en cours avant de changer de zone.");
-      return false;
-    }
-    return true;
-  }
-
-  async function moveToZone(nextIndex: number) {
-    if (!visit || !canLeaveZone()) return;
-    const bounded = Math.max(0, Math.min(nextIndex, ZONES.length - 1));
-    setZoneIndex(bounded);
-    await updateVisit({ currentZoneId: ZONES[bounded].id, status: "in_progress" });
-  }
-
-  async function advanceZone() {
-    if (!currentZoneProgress || !canLeaveZone()) return;
-    if (currentZoneProgress.status === "pending") {
-      window.alert("Indiquez « Rien à signaler », ajoutez une observation ou marquez la zone non accessible.");
-      return;
-    }
-    if (zoneIndex === ZONES.length - 1) {
-      setScreen("review");
-      return;
-    }
-    await moveToZone(zoneIndex + 1);
-  }
-
-  async function openZoneFromReview(index: number) {
-    setScreen("visit");
-    await moveToZone(index);
-  }
-
-  async function closeVisit() {
-    if (!visit) return;
-    const missing = zoneProgress.filter((zone) => zone.status === "pending");
-    if (missing.length > 0) {
-      window.alert(`${missing.length} zone${missing.length > 1 ? "s restent" : " reste"} à contrôler.`);
-      return;
-    }
-    const now = new Date().toISOString();
-    await updateVisit({ status: "completed", completedAt: now });
-  }
-
-  async function installVista() {
-    if (installPrompt) {
-      await installPrompt.prompt();
-      const result = await installPrompt.userChoice;
-      if (result.outcome === "accepted") setInstalled(true);
-      setInstallPrompt(null);
-      return;
-    }
-    setShowInstallHelp(true);
-  }
-
-  async function resetDemo() {
-    if (!window.confirm("Effacer cette visite locale et toutes ses observations ?")) return;
-    revokeObservationUrls(observations);
-    if (draftAudio) URL.revokeObjectURL(draftAudio.previewUrl);
-    draftPhotos.forEach((photo) => URL.revokeObjectURL(photo.previewUrl));
-    const state = await resetFieldState(ZONES);
-    setVisit(state.visit);
-    setZoneProgress(state.zones);
-    setObservations([]);
-    setDraft("");
-    setDraftAudio(null);
-    setDraftPhotos([]);
-    setZoneIndex(0);
-    setScreen("home");
-  }
-
-  return (
-    <main className={`vista-shell ${screen === "visit" ? "visit-mode" : ""}`}>
-      {!online && <div className="offline-banner">Mode hors connexion · vos données restent sur cet appareil</div>}
-
-      {screen === "visit" ? (
-        <VisitScreen
-          online={online}
-          observations={currentZoneObservations}
-          currentZone={currentZone}
-          zoneStatus={currentZoneProgress?.status ?? "pending"}
-          draft={draft}
-          draftAudio={draftAudio}
-          draftPhotos={draftPhotos}
-          onDraftChange={setDraft}
-          onSave={submitObservation}
-          onToggleRecording={toggleRecording}
-          onRemoveAudio={removeDraftAudio}
-          onRemovePhoto={removeDraftPhoto}
-          onStatusChange={updateZoneStatus}
-          recording={recording}
-          recordingSeconds={recordingSeconds}
-          saving={saving}
-          zoneIndex={zoneIndex}
-          completedZoneCount={completedZoneCount}
-          onBack={() => canLeaveZone() && setScreen("home")}
-          onPrevious={() => moveToZone(zoneIndex - 1)}
-          onNext={advanceZone}
-          onCamera={() => cameraRef.current?.click()}
-          onLibrary={() => libraryRef.current?.click()}
-        />
-      ) : screen === "review" && visit ? (
-        <ReviewScreen
-          visit={visit}
-          zones={zoneProgress}
-          observations={observations}
-          onBack={() => setScreen("visit")}
-          onOpenZone={openZoneFromReview}
-          onCloseVisit={closeVisit}
-          onReset={resetDemo}
-        />
-      ) : (
-        <>
-          <AppHeader online={online} />
-          {screen === "home" && (
-            <HomeScreen
-              installed={installed}
-              storageReady={storageReady}
-              visit={visit}
-              observationCount={observations.length}
-              completedZoneCount={completedZoneCount}
-              pendingSyncCount={pendingSyncCount}
-              onInstall={installVista}
-              onStart={startVisit}
-            />
-          )}
-          {screen === "visits" && visit && (
-            <VisitsScreen visit={visit} observationCount={observations.length} onResume={startVisit} />
-          )}
-          {screen === "actions" && <ActionsScreen />}
-          <BottomNav screen={screen} onChange={setScreen} />
-        </>
-      )}
-
-      <input ref={cameraRef} className="visually-hidden" type="file" accept="image/*" capture="environment" onChange={importPhotos} />
-      <input ref={libraryRef} className="visually-hidden" type="file" accept="image/*" multiple onChange={importPhotos} />
-
-      {showInstallHelp && <InstallSheet ios={isIosDevice()} onClose={() => setShowInstallHelp(false)} />}
-    </main>
-  );
-}
-
-function AppHeader({ online }: { online: boolean }) {
-  return (
-    <header className="vista-header">
-      <div className="vista-brand"><span className="vista-mark">V</span><span>VISTA</span></div>
-      <span className={`status-pill ${online ? "" : "is-offline"}`}><i /> {online ? "En ligne" : "Hors ligne"}</span>
-    </header>
-  );
-}
-
-function HomeScreen({
-  installed,
-  storageReady,
-  visit,
-  observationCount,
-  completedZoneCount,
-  pendingSyncCount,
-  onInstall,
-  onStart,
-}: {
-  installed: boolean;
-  storageReady: boolean;
-  visit: VistaVisit | null;
-  observationCount: number;
-  completedZoneCount: number;
-  pendingSyncCount: number;
-  onInstall: () => void;
-  onStart: () => void;
-}) {
-  const progress = Math.round((completedZoneCount / ZONES.length) * 100);
-  const buttonLabel = visit?.status === "completed"
-    ? "Consulter la visite"
-    : visit?.status === "in_progress" ? "Reprendre la visite" : "Commencer la visite";
-
-  return (
-    <>
-      <section className="welcome-block">
-        <p className="eyebrow">{visit ? formatVisitDate(visit.scheduledAt) : "Chargement"}</p>
-        <h1>Bonjour Nicolas</h1>
-        <p>{visit?.status === "completed" ? "Votre visite est clôturée." : "Votre prochaine visite est prête."}</p>
-      </section>
-
-      {!installed && (
-        <button type="button" className="install-card" onClick={onInstall}>
-          <span className="install-icon"><Download size={21} aria-hidden="true" /></span>
-          <span><strong>Installer VISTA</strong><small>Ajoutez l’icône sur votre écran d’accueil</small></span>
-          <b>Installer</b>
-        </button>
-      )}
-
-      <section className="visit-card">
-        <div className="visit-card-topline">
-          <span className="visit-tag">À 09:30</span>
-          <span className="visit-type">{visit?.status === "completed" ? "Visite clôturée" : "Visite technique"}</span>
-        </div>
-        <h2>{visit?.propertyName ?? "Résidence du Parc"}</h2>
-        <p>{visit?.address ?? "12 rue des Tilleuls · 75015 Paris"}</p>
-        <div className="visit-progress-line"><span style={{ width: `${progress}%` }} /></div>
-        <div className="visit-stats">
-          <span><strong>{completedZoneCount}/{ZONES.length}</strong> zones</span>
-          <span><strong>{observationCount}</strong> observation{observationCount > 1 ? "s" : ""}</span>
-          {pendingSyncCount > 0 && <span className="pending-copy">Stockage local</span>}
-        </div>
-        <button type="button" className="primary-action" onClick={onStart} disabled={!storageReady}>
-          {buttonLabel}<span>→</span>
-        </button>
-      </section>
-
-      <section className="today-section">
-        <div><p className="eyebrow">Aujourd’hui</p><h2>Une visite planifiée</h2></div>
-        <span className="day-count">1</span>
-      </section>
-    </>
-  );
-}
-
-function VisitScreen({
-  online,
-  observations,
-  currentZone,
-  zoneStatus,
-  draft,
-  draftAudio,
-  draftPhotos,
-  onDraftChange,
-  onSave,
-  onToggleRecording,
-  onRemoveAudio,
-  onRemovePhoto,
-  onStatusChange,
-  recording,
-  recordingSeconds,
-  saving,
-  zoneIndex,
-  completedZoneCount,
-  onBack,
-  onPrevious,
-  onNext,
-  onCamera,
-  onLibrary,
-}: {
-  online: boolean;
-  observations: ObservationView[];
-  currentZone: ZoneTemplate;
-  zoneStatus: ZoneStatus;
-  draft: string;
-  draftAudio: MediaView | null;
-  draftPhotos: MediaView[];
-  onDraftChange: (value: string) => void;
-  onSave: () => void;
-  onToggleRecording: () => void;
-  onRemoveAudio: () => void;
-  onRemovePhoto: (id: string) => void;
-  onStatusChange: (status: ZoneStatus) => void;
-  recording: boolean;
-  recordingSeconds: number;
-  saving: boolean;
-  zoneIndex: number;
-  completedZoneCount: number;
-  onBack: () => void;
-  onPrevious: () => void;
-  onNext: () => void;
-  onCamera: () => void;
-  onLibrary: () => void;
-}) {
-  const percent = Math.round((completedZoneCount / ZONES.length) * 100);
-  const canSave = Boolean(draft.trim() || draftAudio || draftPhotos.length);
-  const hasMedia = Boolean(draftAudio || draftPhotos.length);
-  const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
-  const [keyboardOpen, setKeyboardOpen] = useState(false);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const fieldRef = useRef<HTMLElement>(null);
-  const attachmentMenuRef = useRef<HTMLDivElement>(null);
-
-  useLayoutEffect(() => {
-    const textarea = textareaRef.current;
-    if (!textarea) return;
-    textarea.style.height = "0px";
-    const height = Math.min(textarea.scrollHeight, 120);
-    textarea.style.height = `${height}px`;
-    textarea.style.overflowY = textarea.scrollHeight > 120 ? "auto" : "hidden";
-  }, [draft, hasMedia]);
-
   useEffect(() => {
-    // Le clavier réduit le viewport visible, même si le viewport CSS ne change pas.
-    const viewport = window.visualViewport;
-    const updateViewport = () => {
-      if (viewport && viewport.scale !== 1) return;
-      fieldRef.current?.style.setProperty("--field-height", `${viewport?.height ?? window.innerHeight}px`);
-      fieldRef.current?.style.setProperty("--field-top", `${viewport?.offsetTop ?? 0}px`);
-      setKeyboardOpen(Boolean(viewport && window.innerHeight - viewport.height > 140));
-    };
-    updateViewport();
-    viewport?.addEventListener("resize", updateViewport);
-    viewport?.addEventListener("scroll", updateViewport);
-    window.addEventListener("resize", updateViewport);
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      viewport?.removeEventListener("resize", updateViewport);
-      viewport?.removeEventListener("scroll", updateViewport);
-      window.removeEventListener("resize", updateViewport);
-      document.body.style.overflow = previousOverflow;
-    };
+    if (!undo) return;
+    const timer = setTimeout(() => setUndo(null), Math.max(0, undo.expires - Date.now()));
+    return () => clearTimeout(timer);
+  }, [undo]);
+
+  // Serialize writes so a delayed draft cannot overwrite a submitted/editing draft.
+  function write(operation: () => Promise<void>): Promise<boolean> {
+    setWrites((count) => count + 1);
+    const result = queue.current.then(async () => {
+      try { await operation(); setField(await loadFieldState(ZONES)); setError(""); return true; }
+      catch (cause) { setError(cause instanceof Error ? cause.message : "Enregistrement impossible. Vos données saisies restent affichées ; réessayez."); return false; }
+      finally { setWrites((count) => count - 1); }
+    });
+    queue.current = result.then(() => undefined);
+    return result;
+  }
+  function flushDrafts() {
+    for (const [zoneId, timer] of timers.current) {
+      clearTimeout(timer);
+      const value = draftRef.current[zoneId];
+      if (value) void write(() => saveDraft(value));
+    }
+    timers.current.clear(); setDraftPending(false);
+  }
+  function changeDraft(zoneId: string, changes: Partial<VistaDraft>) {
+    if (!visit || readonly) return;
+    const next = { ...(draftRef.current[zoneId] ?? emptyDraft(visit.id, zoneId)), ...changes };
+    draftRef.current = { ...draftRef.current, [zoneId]: next }; setDrafts(draftRef.current);
+    clearTimeout(timers.current.get(zoneId)); setDraftPending(true);
+    timers.current.set(zoneId, setTimeout(() => {
+      timers.current.delete(zoneId); setDraftPending(timers.current.size > 0);
+      void write(() => saveDraft(next));
+    }, 400));
+  }
+  const flushHiddenDrafts = useEffectEvent(() => flushDrafts());
+  useEffect(() => {
+    const flush = () => { if (document.visibilityState === "hidden") flushHiddenDrafts(); };
+    document.addEventListener("visibilitychange", flush);
+    return () => document.removeEventListener("visibilitychange", flush);
   }, []);
 
+  function navigate(index: number, warn = false) {
+    if (!visit) return;
+    if (recording) recorder.current?.stop();
+    flushDrafts();
+    setLeftPending(warn && field?.zones[zoneIndex]?.status === "pending" ? zoneIndex : null);
+    const bounded = Math.max(0, Math.min(index, ZONES.length - 1));
+    setZoneIndex(bounded); setScreen("visit"); setZonesOpen(false);
+    void write(() => saveVisit({ ...visit, currentZoneId: ZONES[bounded].id }));
+  }
+  async function start() {
+    if (!visit) return;
+    if (readonly) { setScreen("review"); return; }
+    if (visit.status === "planned" && !await write(() => saveVisit({ ...visit, status: "in_progress", updatedAt: new Date().toISOString() }))) return;
+    setScreen("visit");
+  }
+  function backHome() { if (recording) recorder.current?.stop(); flushDrafts(); setScreen("home"); }
+  function nextZone() {
+    if (zoneIndex < ZONES.length - 1) navigate(zoneIndex + 1, true);
+    else { if (recording) recorder.current?.stop(); flushDrafts(); setScreen("review"); setLeftPending(null); }
+  }
+  function setStatus(status: ZoneStatus, reason?: InaccessibleReason) {
+    const progress = field?.zones[zoneIndex];
+    if (!progress || readonly) return;
+    void write(() => saveZoneProgress({ ...progress, status, inaccessibleReason: reason, updatedAt: new Date().toISOString() }));
+  }
+  async function submit() {
+    if (!visit || !draft || !hasContent(draft) || recording || readonly || writes > 0) return;
+    flushDrafts();
+    const original = field?.observations.find((item) => item.id === draft.editingId);
+    const now = new Date().toISOString();
+    const observation: VistaObservation = { id: original?.id ?? crypto.randomUUID(), visitId: visit.id, zoneId: zone.id, zoneLabel: zone.label,
+      createdAt: original?.createdAt ?? now, updatedAt: now, text: draft.text.trim() || undefined, audio: draft.audio,
+      photos: draft.photos, severity: draft.severity, createAction: original?.createAction ?? draft.severity !== "info", syncStatus: "local" };
+    const cleared = emptyDraft(visit.id, zone.id);
+    if (await write(() => saveObservation(observation, true))) {
+      draftRef.current = { ...draftRef.current, [zone.id]: cleared }; setDrafts(draftRef.current);
+    }
+  }
+  function edit(observation: VistaObservation) {
+    changeDraft(observation.zoneId, { text: observation.text ?? "", audio: observation.audio, photos: observation.photos, severity: observation.severity ?? "info", editingId: observation.id });
+  }
+  async function remove(observation: VistaObservation) {
+    let action: FollowUpAction | undefined;
+    if (await write(async () => { action = await deleteObservation(observation); })) {
+      if (draftRef.current[observation.zoneId]?.editingId === observation.id) changeDraft(observation.zoneId, emptyDraft(observation.visitId, observation.zoneId));
+      setUndo({ observation, action, expires: Date.now() + 5000 });
+    }
+  }
+  function toggleAction(observation: VistaObservation) { void write(() => saveObservation({ ...observation, createAction: !observation.createAction, updatedAt: new Date().toISOString() })); }
+  async function toggleRecording() {
+    if (recording) { recorder.current?.stop(); return; }
+    if (!visit || readonly || recordingStarting.current) return;
+    const origin = zone.id;
+    recordingStarting.current = true;
+    let stream: MediaStream | undefined;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const device = new MediaRecorder(stream); const chunks: Blob[] = [];
+      recorder.current = device;
+      device.ondataavailable = (event) => { if (event.data.size) chunks.push(event.data); };
+      device.onstop = () => {
+        stream?.getTracks().forEach((track) => track.stop());
+        setRecording(false); setSeconds(0);
+        const blob = new Blob(chunks, { type: device.mimeType || "audio/webm" });
+        if (blob.size && mounted.current) changeDraft(origin, { audio: { id: crypto.randomUUID(), blob, mimeType: blob.type, fileName: `note-${Date.now()}.${blob.type.includes("mp4") ? "m4a" : "webm"}`, createdAt: new Date().toISOString() } });
+      };
+      device.start(); setSeconds(0); setRecording(true); setError("");
+    } catch {
+      stream?.getTracks().forEach((track) => track.stop());
+      setError("Autorisez le microphone dans votre navigateur pour enregistrer une note vocale.");
+    } finally { recordingStarting.current = false; }
+  }
+  function importPhotos(event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? []).filter((file) => file.type.startsWith("image/")); event.target.value = "";
+    if (!files.length) return;
+    const origin = mediaZone.current;
+    const photos = files.map((file): VistaMedia => ({ id: crypto.randomUUID(), blob: file, mimeType: file.type, fileName: file.name, createdAt: new Date().toISOString() }));
+    changeDraft(origin, { photos: [...(draftRef.current[origin]?.photos ?? []), ...photos] });
+  }
+  function pickPhoto(kind: "camera" | "library") { mediaZone.current = zone.id; (kind === "camera" ? camera : library).current?.click(); }
+  async function install() {
+    if (!installPrompt) { setInstallHelp(true); return; }
+    await installPrompt.prompt(); const choice = await installPrompt.userChoice;
+    if (choice.outcome === "accepted") setInstalled(true); setInstallPrompt(null);
+  }
+  function hideInstall() { setInstallHidden(true); try { localStorage.setItem("vista-install-hidden", "1"); } catch { /* The advice can still be dismissed for this session. */ } }
+  async function reset() {
+    flushDrafts();
+    if (await write(async () => { await resetFieldState(ZONES); })) {
+      draftRef.current = {}; setDrafts({}); setUndo(null); setZoneIndex(0); setScreen("home");
+    }
+  }
+
+  return <main className={`vista-shell ${screen === "visit" ? "visit-mode" : ""}`}>
+    {screen !== "visit" && !online && <div className="offline-banner">Hors connexion · vos données restent sur cet appareil</div>}
+    {screen !== "visit" && error && <div className="error-banner" role="alert">{error}</div>}
+    {!field && <p role="status">Chargement de la visite…</p>}
+    {field && screen === "visit" && draft && <FieldScreen field={field} zoneIndex={zoneIndex} draft={draft} busy={busy} error={error} online={online} recording={recording} seconds={seconds}
+      warning={leftPending !== null && field.zones[leftPending]?.status === "pending" ? leftPending : null}
+      onBack={backHome} onZones={() => setZonesOpen(true)} onNavigate={navigate} onNext={nextZone} onStatus={setStatus}
+      onDraft={(changes) => changeDraft(zone.id, changes)} onSubmit={submit} onRecord={toggleRecording} onPhoto={pickPhoto}
+      onEdit={edit} onDelete={remove} onAction={toggleAction} />}
+    {field && screen === "review" && <ReviewScreen field={field} busy={busy} recording={recording} drafts={drafts} onBack={() => setScreen("visit")} onZone={navigate} onAction={toggleAction}
+      onClose={async () => { flushDrafts(); if (await write(() => closeFieldVisit(field.visit.id))) setUndo(null); }}
+      onReopen={async () => { if (await write(() => reopenFieldVisit(field.visit.id))) setScreen("visit"); }} onActions={() => setScreen("actions")} onReset={reset} />}
+    {field && ["home", "visits", "actions"].includes(screen) && <>
+      <header className="vista-header"><div className="vista-brand"><span className="vista-mark">V</span>VISTA</div><Saved busy={busy} error={error} label={online ? "À jour" : "Hors connexion"} /></header>
+      {screen === "home" && <HomeScreen field={field} onStart={start} showInstall={!installed && !installHidden} onInstall={install} onHideInstall={hideInstall} onSaveProperty={(property) => write(() => saveProperty(property))} onActions={() => setScreen("actions")} />}
+      {screen === "visits" && <section className="secondary-screen"><p className="eyebrow">Votre agenda</p><h1>Visites</h1><button className="list-card" onClick={start}><span className="date-tile">{new Intl.DateTimeFormat("fr-FR", { month: "short" }).format(new Date(field.visit.scheduledAt))}<strong>{new Date(field.visit.scheduledAt).getDate()}</strong></span><span><strong>{field.visit.propertyName}</strong><small>{field.visit.status === "completed" ? "Clôturée" : field.visit.status === "in_progress" ? "En cours" : "Planifiée"} · {field.observations.length} constats</small></span><ChevronRight aria-hidden="true" /></button></section>}
+      {screen === "actions" && <ActionsScreen field={field} onSave={(action) => write(() => saveAction(action))} />}
+      <nav className="bottom-nav" aria-label="Navigation principale">{([{ id: "home", label: "Accueil", Icon: House }, { id: "visits", label: "Visites", Icon: ClipboardList }, { id: "actions", label: "Actions", Icon: ListChecks }] as const).map(({ id, label, Icon }) => <button key={id} aria-current={screen === id ? "page" : undefined} className={screen === id ? "active" : ""} onClick={() => setScreen(id)}><Icon size={22} aria-hidden="true" /><span>{label}</span></button>)}</nav>
+    </>}
+    <input ref={camera} className="visually-hidden" type="file" accept="image/*" capture="environment" aria-label="Prendre une photo" onChange={importPhotos} />
+    <input ref={library} className="visually-hidden" type="file" accept="image/*" multiple aria-label="Importer des photos" onChange={importPhotos} />
+    {undo && <div className="undo-toast" role="status">Constat supprimé<button onClick={async () => { if (Date.now() >= undo.expires) return; if (await write(() => restoreObservation(undo.observation, undo.action))) setUndo(null); }}>Annuler</button></div>}
+    {zonesOpen && field && <Sheet title="Toutes les zones" onClose={() => setZonesOpen(false)}><h2>Zones</h2><p>{field.zones.filter((item) => item.status !== "pending").length} sur {ZONES.length} renseignées</p><ZoneList field={field} drafts={drafts} current={zoneIndex} onZone={navigate} /></Sheet>}
+    {installHelp && <Sheet title="Installer VISTA" onClose={() => setInstallHelp(false)}><span className="large-mark">V</span><h2>VISTA à portée de main</h2><p>Ajoutez l’application à l’écran d’accueil pour la lancer comme une app.</p><ol><li>Ouvrez VISTA dans Safari sur iPhone, ou votre navigateur habituel sur Android.</li><li>Dans le menu Partager ou ⋮, choisissez « Ajouter à l’écran d’accueil » ou « Installer ».</li><li>Lancez VISTA une première fois avec une connexion pour préparer le mode hors ligne.</li></ol><p>Les visites sont stockées sur cet appareil. Effacer les données du navigateur les supprime.</p><button className="primary-action" onClick={() => setInstallHelp(false)}>Compris<Check aria-hidden="true" /></button></Sheet>}
+  </main>;
+}
+
+function Saved({ busy, error, label = "Enregistré" }: { busy: boolean; error: string; label?: string }) {
+  return <span className={`saved-pill ${error ? "has-error" : ""}`} role="status" title="Enregistrement local sur cet appareil, sans synchronisation serveur">{busy ? <LoaderCircle className="saving-spinner" size={16} aria-hidden="true" /> : error ? <CircleAlert size={16} aria-hidden="true" /> : <Check size={16} aria-hidden="true" />}<span>{busy ? "Enregistrement…" : error ? "Non enregistré" : label}</span></span>;
+}
+function StatusIcon({ zone, count, severity }: { zone: VistaZoneProgress; count: number; severity?: Severity }) {
+  return <span className={`zone-dot status-${zone.status} ${zone.status === "observed" && severity ? `priority-${severity}` : ""}`} aria-hidden="true">{zone.status === "clear" ? <Check size={16} /> : zone.status === "inaccessible" ? <Ban size={16} /> : zone.status === "observed" ? count : null}</span>;
+}
+function Segments({ zones, observations, current }: { zones: VistaZoneProgress[]; observations: VistaObservation[]; current?: number }) {
+  return <div className="segments" aria-hidden="true">{zones.map((zone, index) => <span key={zone.id} className={`segment segment-${zone.status} ${zone.status === "observed" ? `priority-${zoneSeverity(observations, zone.zoneId) ?? "info"}` : ""} ${index === current ? "current" : ""}`} />)}</div>;
+}
+function ZoneList({ field, drafts, current, onZone }: { field: VistaFieldState; drafts: Record<string, VistaDraft>; current?: number; onZone: (index: number) => void }) {
+  return <div className="zone-review-list">{field.zones.map((zone, index) => {
+    const items = field.observations.filter((item) => item.zoneId === zone.zoneId); const urgent = items.filter((item) => item.severity === "urgent").length;
+    const severity = zoneSeverity(items, zone.zoneId);
+    const detail = zone.status === "observed" ? `${items.length} constat${items.length > 1 ? "s" : ""}${urgent ? ` · ${urgent} urgent${urgent > 1 ? "s" : ""}` : ` · ${SEVERITY[severity ?? "info"]}`}` : zone.status === "pending" && hasContent(drafts[zone.zoneId]) ? "Brouillon en cours" : `${STATUS[zone.status]}${zone.inaccessibleReason ? ` · ${REASONS[zone.inaccessibleReason]}` : ""}`;
+    return <button key={zone.id} onClick={() => onZone(index)} aria-current={index === current ? "step" : undefined}><StatusIcon zone={zone} count={items.length} severity={severity} /><span><strong>{zone.zoneLabel}</strong><small className={urgent ? "urgent-text" : zone.status === "inaccessible" ? "inaccessible-text" : ""}>{detail}</small></span>{index === current && <b className="here-pill">Ici</b>}<ChevronRight size={18} aria-hidden="true" /></button>;
+  })}</div>;
+}
+function Sheet({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null); const close = useEffectEvent(onClose);
   useEffect(() => {
-    if (!attachmentMenuOpen) return;
-    const dismissOutside = (event: PointerEvent) => {
-      if (!attachmentMenuRef.current?.contains(event.target as Node)) setAttachmentMenuOpen(false);
+    const previous = document.activeElement as HTMLElement | null; const sheet = ref.current;
+    const focusables = () => Array.from(sheet?.querySelectorAll<HTMLElement>('button:not(:disabled), input, textarea, a[href], [tabindex="0"]') ?? []);
+    focusables()[0]?.focus();
+    const trap = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); close(); }
+      if (event.key === "Tab") {
+        const list = focusables(); const first = list[0]; const last = list.at(-1);
+        if (!list.length) { event.preventDefault(); sheet?.focus(); }
+        else if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+      }
     };
-    const dismissEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setAttachmentMenuOpen(false);
-    };
-    document.addEventListener("pointerdown", dismissOutside);
-    document.addEventListener("keydown", dismissEscape);
-    return () => {
-      document.removeEventListener("pointerdown", dismissOutside);
-      document.removeEventListener("keydown", dismissEscape);
-    };
-  }, [attachmentMenuOpen]);
-
-  return (
-    <section ref={fieldRef} className={`field-screen ${keyboardOpen ? "keyboard-open" : ""}`}>
-      <div className="field-content">
-      <header className="field-header">
-        <button type="button" className="icon-button" onClick={onBack} aria-label="Retour"><ArrowLeft size={22} aria-hidden="true" /></button>
-        <div><span>Résidence du Parc{!online ? " · Hors connexion" : ""}</span><strong>Zone {zoneIndex + 1} sur {ZONES.length}</strong></div>
-        <span className="progress-number">{percent}%</span>
-      </header>
-
-      <div className="field-progress"><span style={{ width: `${percent}%` }} /></div>
-
-      <div className="zone-heading">
-        <p className="eyebrow">Inspection en cours</p>
-        <h1>{currentZone.label}</h1>
-        <p>{currentZone.hint}</p>
-      </div>
-
-      <ZoneStatusPicker status={zoneStatus} hasObservations={observations.length > 0} onChange={onStatusChange} />
-
-      <div className="capture-feed">
-        {observations.length === 0 ? (
-          <div className="empty-capture">
-            <span><Mic size={24} aria-hidden="true" /></span>
-            <strong>Dictez votre premier constat</strong>
-            <p>Appuyez sur le micro pour parler, ou écrivez ci-dessous. Le bouton + permet d’ajouter des photos.</p>
-          </div>
-        ) : observations.map((observation) => <ObservationCard key={observation.id} observation={observation} />)}
-      </div>
-      </div>
-
-      <div className="composer-wrap">
-        {recording && <div className="recording-bar" role="status"><i /> Enregistrement {durationLabel(recordingSeconds)} <span>Appuyez sur ■ pour terminer</span></div>}
-        {(draftAudio || draftPhotos.length > 0) && (
-          <DraftAttachments audio={draftAudio} photos={draftPhotos} onRemoveAudio={onRemoveAudio} onRemovePhoto={onRemovePhoto} />
-        )}
-        {hasMedia && <p id="composer-media-help" className="composer-context">{draftAudio ? "Note vocale" : "Photos"}{draftAudio && draftPhotos.length > 0 ? " + photos" : ""} · ajoutez un titre ou commentaire ci-dessous (facultatif).</p>}
-        <div className={`composer ${canSave ? "has-draft" : ""}`}>
-          <div className="attachment-control" ref={attachmentMenuRef}>
-            {attachmentMenuOpen && (
-              <div id="attachment-options" className="attachment-menu" role="group" aria-label="Ajouter des photos">
-                <button type="button" onClick={() => { setAttachmentMenuOpen(false); onCamera(); }}><Camera size={22} aria-hidden="true" /><span>Prendre une photo</span></button>
-                <button type="button" onClick={() => { setAttachmentMenuOpen(false); onLibrary(); }}><Images size={22} aria-hidden="true" /><span>Importer des photos</span></button>
-              </div>
-            )}
-            <button type="button" className="composer-tool" onClick={() => setAttachmentMenuOpen(!attachmentMenuOpen)} aria-label={attachmentMenuOpen ? "Fermer les options de photos" : "Ajouter des photos"} aria-expanded={attachmentMenuOpen} aria-controls="attachment-options" disabled={recording || saving}>
-              {attachmentMenuOpen ? <X size={23} aria-hidden="true" /> : <Plus size={25} aria-hidden="true" />}
-            </button>
-          </div>
-          <textarea
-            ref={textareaRef}
-            value={draft}
-            onChange={(event) => onDraftChange(event.target.value)}
-            onFocus={() => setAttachmentMenuOpen(false)}
-            placeholder={hasMedia ? "Titre / commentaire…" : "Écrire…"}
-            rows={1}
-            aria-label={hasMedia ? "Titre ou commentaire des pièces jointes" : "Observation écrite"}
-            aria-describedby={hasMedia ? "composer-media-help" : undefined}
-          />
-          <button type="button" className={`mic-button ${recording ? "recording" : ""}`} onClick={onToggleRecording} disabled={saving || Boolean(draftAudio)} aria-label={recording ? "Arrêter l’enregistrement" : "Ajouter une note vocale"}>
-            {recording ? <Square size={20} fill="currentColor" aria-hidden="true" /> : <Mic size={23} aria-hidden="true" />}
-          </button>
-          {canSave && <button type="button" className="send-button" onClick={() => { setAttachmentMenuOpen(false); onSave(); }} disabled={saving || recording} aria-label="Enregistrer l’observation">
-            {saving ? <LoaderCircle size={23} className="saving-spinner" aria-hidden="true" /> : <ArrowRight size={25} aria-hidden="true" />}
-          </button>}
-        </div>
-        <div className="zone-navigation">
-          <button type="button" onClick={onPrevious} disabled={zoneIndex === 0}><ArrowLeft size={17} aria-hidden="true" /> Zone précédente</button>
-          <button type="button" className="next-zone" onClick={onNext}>{zoneIndex === ZONES.length - 1 ? "Vérifier la visite" : "Zone suivante"}<ArrowRight size={18} aria-hidden="true" /></button>
-        </div>
-      </div>
-    </section>
-  );
+    const keepInside = (event: FocusEvent) => { if (sheet && !sheet.contains(event.target as Node)) focusables()[0]?.focus(); };
+    const overflow = document.body.style.overflow; document.body.style.overflow = "hidden";
+    document.addEventListener("keydown", trap); document.addEventListener("focusin", keepInside);
+    return () => { document.removeEventListener("keydown", trap); document.removeEventListener("focusin", keepInside); document.body.style.overflow = overflow; if (previous?.isConnected) previous.focus(); };
+  }, []);
+  return <div className="sheet-backdrop"><button className="sheet-dismiss" aria-label="Fermer la fenêtre" onClick={onClose} /><div ref={ref} className="install-sheet" role="dialog" aria-modal="true" aria-label={title} tabIndex={-1}><span className="sheet-handle" /><button className="sheet-close" aria-label="Fermer" onClick={onClose}><X size={22} aria-hidden="true" /></button>{children}</div></div>;
+}
+function Media({ item, photo = false }: { item: VistaMedia; photo?: boolean }) {
+  const ref = useRef<HTMLImageElement & HTMLAudioElement>(null);
+  useEffect(() => { const value = URL.createObjectURL(item.blob); if (ref.current) ref.current.src = value; return () => URL.revokeObjectURL(value); }, [item.blob]);
+  // These are the user's raw voice notes; a transcript will arrive with the AI lot.
+  // eslint-disable-next-line jsx-a11y/media-has-caption
+  return photo ? <img ref={ref} alt="Pièce jointe du constat" /> : <audio ref={ref} controls aria-label="Note vocale du constat" />;
+}
+function ObservationCard({ item, readonly, onAction, onEdit, onDelete, showZone = false }: { item: VistaObservation; readonly: boolean; onAction: (item: VistaObservation) => void; onEdit?: (item: VistaObservation) => void; onDelete?: (item: VistaObservation) => void; showZone?: boolean }) {
+  return <article className="capture-card observation-card"><div className="capture-meta"><b className={`severity sev-${item.severity ?? "info"}`}>{SEVERITY[item.severity ?? "info"]}</b><span>{showZone ? item.zoneLabel : formatTime(item.createdAt)}</span></div>
+    {item.text && <p>{item.text}</p>}{item.audio && <Media item={item.audio} />}{item.photos.length > 0 && <div className="observation-photos">{item.photos.map((photo) => <Media key={photo.id} item={photo} photo />)}</div>}
+    {showZone && (item.audio || item.photos.length > 0) && <p className="media-count">{item.audio ? "1 note vocale" : ""}{item.audio && item.photos.length ? " · " : ""}{item.photos.length ? `${item.photos.length} photo${item.photos.length > 1 ? "s" : ""}` : ""}</p>}
+    {!readonly && <div className="observation-controls"><label><input type="checkbox" checked={Boolean(item.createAction)} onChange={() => onAction(item)} />Créer une action de suivi</label><div>{onEdit && <button className="plain-icon" aria-label="Modifier le constat" onClick={() => onEdit(item)}><Pencil size={18} aria-hidden="true" /></button>}{onDelete && <button className="plain-icon" aria-label="Supprimer le constat" onClick={() => onDelete(item)}><Trash2 size={18} aria-hidden="true" /></button>}</div></div>}
+  </article>;
 }
 
-function ZoneStatusPicker({ status, hasObservations, onChange }: { status: ZoneStatus; hasObservations: boolean; onChange: (status: ZoneStatus) => void }) {
-  return (
-    <section className="zone-status-card">
-      <div><span>Statut de la zone</span><strong className={`zone-status status-${status}`}>{STATUS_LABELS[status]}</strong></div>
-      <div className="zone-status-actions">
-        <button type="button" className={status === "clear" ? "active" : ""} disabled={hasObservations} onClick={() => onChange("clear")}><Check size={17} aria-hidden="true" /> Rien à signaler</button>
-        <button type="button" className={status === "inaccessible" ? "active" : ""} disabled={hasObservations} onClick={() => onChange("inaccessible")}><Ban size={17} aria-hidden="true" /> Non accessible</button>
-      </div>
-    </section>
-  );
-}
-
-function DraftAttachments({ audio, photos, onRemoveAudio, onRemovePhoto }: { audio: MediaView | null; photos: MediaView[]; onRemoveAudio: () => void; onRemovePhoto: (id: string) => void }) {
-  return (
-    <div className="draft-attachments">
-      {audio && (
-        <div className="draft-audio">
-          <span><Mic size={18} aria-hidden="true" /> Note vocale jointe</span>
-          {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-          <audio src={audio.previewUrl} controls preload="metadata" aria-label="Écouter la note vocale avant enregistrement" />
-          <button type="button" onClick={onRemoveAudio} aria-label="Retirer la note vocale"><X size={16} aria-hidden="true" /></button>
-        </div>
-      )}
-      {photos.length > 0 && (
-        <div className="draft-photos">
-          {photos.map((photo) => (
-            <div key={photo.id}>
-              <img src={photo.previewUrl} alt="Pièce jointe à l’observation" />
-              <button type="button" onClick={() => onRemovePhoto(photo.id)} aria-label="Retirer la photo"><X size={16} aria-hidden="true" /></button>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ObservationCard({ observation }: { observation: ObservationView }) {
-  const parts = [observation.text ? (observation.audio || observation.photos.length ? "Commentaire" : "Texte") : "", observation.audio ? "Voix" : "", observation.photos.length ? `${observation.photos.length} photo${observation.photos.length > 1 ? "s" : ""}` : ""].filter(Boolean);
-  return (
-    <article className="capture-card observation-card">
-      <div className="capture-meta"><span>{parts.join(" · ")}</span><time>{formatTime(observation.createdAt)}</time></div>
-      {observation.text && <p>{observation.text}</p>}
-      {observation.audio && (
-        // La transcription sera ajoutée après la synchronisation backend.
-        // eslint-disable-next-line jsx-a11y/media-has-caption
-        <audio src={observation.audio.previewUrl} controls preload="metadata" />
-      )}
-      {observation.photos.length > 0 && (
-        <div className="observation-photos">
-          {observation.photos.map((photo) => <img key={photo.id} src={photo.previewUrl} alt={`Observation — ${observation.zoneLabel}`} />)}
-        </div>
-      )}
-      <span className="local-state">{observation.syncStatus === "local" ? "Conservé sur l’appareil" : "Synchronisé"}</span>
-    </article>
-  );
-}
-
-function ReviewScreen({ visit, zones, observations, onBack, onOpenZone, onCloseVisit, onReset }: { visit: VistaVisit; zones: VistaZoneProgress[]; observations: ObservationView[]; onBack: () => void; onOpenZone: (index: number) => void; onCloseVisit: () => void; onReset: () => void }) {
-  const missingZones = zones.filter((zone) => zone.status === "pending");
-  const audioCount = observations.filter((item) => item.audio).length;
-  const photoCount = observations.reduce((total, item) => total + item.photos.length, 0);
-  const completed = visit.status === "completed";
-
-  return (
-    <section className="review-screen">
-      <button type="button" className="text-button" onClick={onBack}>← Revenir à la visite</button>
-      <p className="eyebrow">Contrôle de fin de visite</p>
-      <h1>{completed ? "Visite clôturée" : missingZones.length ? "Quelques zones restent à vérifier" : "Tout est prêt"}</h1>
-      <p className="review-intro">
-        {completed
-          ? "La visite est enregistrée localement et prête pour la future synchronisation du compte rendu."
-          : missingZones.length
-            ? "VISTA bloque la clôture tant qu’une zone n’est pas contrôlée ou justifiée."
-            : "Toutes les zones sont renseignées. Vous pouvez clôturer la visite sans perdre les données locales."}
-      </p>
-      <div className="review-grid">
-        <div><strong>{zones.length - missingZones.length}/{zones.length}</strong><span>zones renseignées</span></div>
-        <div><strong>{observations.length}</strong><span>observations</span></div>
-        <div><strong>{audioCount}</strong><span>notes vocales</span></div>
-        <div><strong>{photoCount}</strong><span>photos</span></div>
-      </div>
-
-      <div className="zone-review-list">
-        {zones.map((zone) => (
-          <button type="button" key={zone.id} onClick={() => onOpenZone(zone.order)}>
-            <span className={`zone-dot status-${zone.status}`} />
-            <span><strong>{zone.zoneLabel}</strong><small>{STATUS_LABELS[zone.status]}</small></span>
-            <b>→</b>
-          </button>
-        ))}
-      </div>
-
-      {!completed ? (
-        <button type="button" className="primary-action review-primary" onClick={onCloseVisit} disabled={missingZones.length > 0}>
-          Clôturer la visite <span>✓</span>
-        </button>
-      ) : (
-        <button type="button" className="primary-action review-primary" onClick={() => window.alert("La synchronisation, l’IA et le PDF constituent le prochain lot de développement.")}>
-          Préparer le compte rendu <span>→</span>
-        </button>
-      )}
-      <button type="button" className="danger-link" onClick={onReset}>Réinitialiser cette démonstration</button>
-    </section>
-  );
-}
-
-function VisitsScreen({ visit, observationCount, onResume }: { visit: VistaVisit; observationCount: number; onResume: () => void }) {
-  return (
-    <section className="secondary-screen">
-      <p className="eyebrow">Planning</p>
-      <h1>Mes visites</h1>
-      <button type="button" className="list-card" onClick={onResume}>
-        <span className="date-tile"><strong>30</strong>SEP</span>
-        <span><strong>{visit.propertyName}</strong><small>09:30 · {observationCount} observation{observationCount > 1 ? "s" : ""} · {visit.status === "completed" ? "Clôturée" : "En cours"}</small></span>
-        <b>→</b>
-      </button>
-    </section>
-  );
-}
-
-function ActionsScreen() {
-  return (
-    <section className="secondary-screen">
-      <p className="eyebrow">Suivi technique</p>
-      <h1>Actions</h1>
-      <div className="empty-list"><span>✓</span><strong>Aucune action en attente</strong><p>Les tâches validées après une visite apparaîtront ici.</p></div>
-    </section>
-  );
-}
-
-function BottomNav({ screen, onChange }: { screen: Screen; onChange: (screen: Screen) => void }) {
-  return (
-    <nav className="bottom-nav" aria-label="Navigation principale">
-      <button className={screen === "home" ? "active" : ""} type="button" onClick={() => onChange("home")}><House size={21} aria-hidden="true" />Accueil</button>
-      <button className={screen === "visits" ? "active" : ""} type="button" onClick={() => onChange("visits")}><ClipboardList size={21} aria-hidden="true" />Visites</button>
-      <button className={screen === "actions" ? "active" : ""} type="button" onClick={() => onChange("actions")}><ListChecks size={21} aria-hidden="true" />Actions</button>
-    </nav>
-  );
-}
-
-function InstallSheet({ ios, onClose }: { ios: boolean; onClose: () => void }) {
-  return (
-    <div className="sheet-backdrop" role="dialog" aria-modal="true" aria-labelledby="install-title">
-      <section className="install-sheet">
-        <span className="sheet-handle" />
-        <button type="button" className="sheet-close" onClick={onClose} aria-label="Fermer">×</button>
-        <div className="large-mark">V</div>
-        <h2 id="install-title">Installer VISTA</h2>
-        <p>Une seule installation, puis VISTA se lancera depuis son icône comme une application.</p>
-        {ios ? (
-          <ol>
-            <li><b>1</b><span>Appuyez sur <strong>Partager</strong> dans Safari</span></li>
-            <li><b>2</b><span>Choisissez <strong>Sur l’écran d’accueil</strong></span></li>
-            <li><b>3</b><span>Confirmez avec <strong>Ajouter</strong></span></li>
-          </ol>
-        ) : (
-          <p className="browser-help">Ouvrez le menu de votre navigateur puis choisissez <strong>Installer l’application</strong> ou <strong>Ajouter à l’écran d’accueil</strong>.</p>
-        )}
-        <button type="button" className="primary-action" onClick={onClose}>J’ai compris <span>✓</span></button>
+function FieldScreen({ field, zoneIndex, draft, busy, error, online, recording, seconds, warning, onBack, onZones, onNavigate, onNext, onStatus, onDraft, onSubmit, onRecord, onPhoto, onEdit, onDelete, onAction }: {
+  field: VistaFieldState; zoneIndex: number; draft: VistaDraft; busy: boolean; error: string; online: boolean; recording: boolean; seconds: number; warning: number | null;
+  onBack: () => void; onZones: () => void; onNavigate: (index: number) => void; onNext: () => void; onStatus: (status: ZoneStatus, reason?: InaccessibleReason) => void;
+  onDraft: (changes: Partial<VistaDraft>) => void; onSubmit: () => void; onRecord: () => void; onPhoto: (kind: "camera" | "library") => void;
+  onEdit: (item: VistaObservation) => void; onDelete: (item: VistaObservation) => void; onAction: (item: VistaObservation) => void;
+}) {
+  const zone = ZONES[zoneIndex]; const progress = field.zones[zoneIndex];
+  const items = field.observations.filter((item) => item.zoneId === zone.id);
+  const readonly = field.visit.status === "completed"; const content = hasContent(draft);
+  const root = useRef<HTMLElement>(null); const textarea = useRef<HTMLTextAreaElement>(null); const menu = useRef<HTMLDivElement>(null);
+  const [attachmentOpen, setAttachmentOpen] = useState(false); const [keyboardOpen, setKeyboardOpen] = useState(false);
+  useLayoutEffect(() => { const input = textarea.current; if (input) { input.style.height = "0px"; input.style.height = `${Math.min(120, Math.max(48, input.scrollHeight))}px`; input.style.overflowY = input.scrollHeight > 120 ? "auto" : "hidden"; } }, [draft.text, draft.editingId, zoneIndex]);
+  useEffect(() => {
+    const viewport = window.visualViewport; const overflow = document.body.style.overflow; document.body.style.overflow = "hidden";
+    const sync = () => { root.current?.style.setProperty("--field-height", `${viewport?.height ?? innerHeight}px`); root.current?.style.setProperty("--field-top", `${viewport?.offsetTop ?? 0}px`); setKeyboardOpen(innerHeight - (viewport?.height ?? innerHeight) > 140); };
+    sync(); viewport?.addEventListener("resize", sync); viewport?.addEventListener("scroll", sync); window.addEventListener("resize", sync);
+    return () => { document.body.style.overflow = overflow; viewport?.removeEventListener("resize", sync); viewport?.removeEventListener("scroll", sync); window.removeEventListener("resize", sync); };
+  }, []);
+  useEffect(() => {
+    if (!attachmentOpen) return;
+    const outside = (event: PointerEvent) => { if (!menu.current?.contains(event.target as Node)) setAttachmentOpen(false); };
+    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") setAttachmentOpen(false); };
+    document.addEventListener("pointerdown", outside); document.addEventListener("keydown", escape);
+    return () => { document.removeEventListener("pointerdown", outside); document.removeEventListener("keydown", escape); };
+  }, [attachmentOpen]);
+  return <section ref={root} className={`field-screen ${keyboardOpen ? "keyboard-open" : ""}`}>
+    {!online && <div className="field-offline">Hors connexion · enregistrement sur cet appareil</div>}
+    <div className="field-content"><header className="field-header"><button className="icon-button" aria-label="Retour à l’accueil" onClick={onBack}><ArrowLeft size={20} aria-hidden="true" /></button><button className="zone-selector" onClick={onZones} aria-haspopup="dialog"><small>{field.visit.propertyName}</small><strong>Zone {zoneIndex + 1} sur {ZONES.length}<ChevronDown size={16} aria-hidden="true" /></strong></button><Saved busy={busy} error={error} /></header>
+      <Segments zones={field.zones} observations={field.observations} current={zoneIndex} />
+      {error && <div className="error-banner" role="alert">{error}</div>}
+      {warning !== null && <div className="pending-banner" role="status"><span><strong>{ZONES[warning].label}</strong> reste à contrôler</span><button onClick={() => onNavigate(warning)}>Y revenir</button></div>}
+      <div className="zone-heading">{readonly && <p className="readonly-pill">Visite clôturée · lecture seule</p>}<h1>{zone.label}</h1><p>{zone.hint}</p></div>
+      <section className="zone-status-card"><div><span>Statut de la zone</span><b className={`zone-status status-${progress.status} ${progress.status === "observed" ? `priority-${zoneSeverity(items, zone.id) ?? "info"}` : ""}`}><StatusIcon zone={progress} count={items.length} severity={zoneSeverity(items, zone.id)} />{progress.status === "observed" ? SEVERITY[zoneSeverity(items, zone.id) ?? "info"] : STATUS[progress.status]}</b></div>
+        {!readonly && (items.length ? <p className="status-explanation">Statut fixé par {items.length === 1 ? "votre constat. Supprimez-le" : `vos ${items.length} constats. Supprimez-les`} pour indiquer « Rien à signaler » ou « Non accessible ».</p> : <div className="zone-status-actions"><button aria-pressed={progress.status === "clear"} className={progress.status === "clear" ? "active" : ""} onClick={() => onStatus(progress.status === "clear" ? "pending" : "clear")}><Check size={18} aria-hidden="true" />Rien à signaler</button><button aria-pressed={progress.status === "inaccessible"} className={progress.status === "inaccessible" ? "active inaccessible" : ""} onClick={() => onStatus(progress.status === "inaccessible" ? "pending" : "inaccessible")}><Ban size={18} aria-hidden="true" />Non accessible</button></div>)}
+        {progress.status === "inaccessible" && !readonly && <div className="reason-section"><strong>Pourquoi ?</strong><p>Facultatif · repris dans le futur compte rendu</p><div className="reason-pills">{(Object.entries(REASONS) as [InaccessibleReason, string][]).map(([key, label]) => <button key={key} aria-pressed={progress.inaccessibleReason === key} onClick={() => onStatus("inaccessible", progress.inaccessibleReason === key ? undefined : key)}>{label}</button>)}</div></div>}
+        {readonly && progress.inaccessibleReason && <p>{REASONS[progress.inaccessibleReason]}</p>}
+      </section>
+      <section className="capture-feed">{items.length > 0 && <h2>{items.length} constat{items.length > 1 ? "s" : ""}</h2>}{items.map((item) => <ObservationCard key={item.id} item={item} readonly={readonly} onAction={onAction} onEdit={onEdit} onDelete={onDelete} />)}
+        {!readonly && !items.length && !content && progress.status === "pending" && <div className="empty-capture"><Mic size={24} aria-hidden="true" /><p><strong>Un constat ?</strong> Dictez-le, photographiez-le ou écrivez-le ci-dessous. Sinon, choisissez un statut.</p></div>}
       </section>
     </div>
-  );
+    <footer className="composer-wrap">{!readonly && <>
+      {recording && <div className="recording-bar" role="status"><i />Enregistrement · {Math.floor(seconds / 60)}:{String(seconds % 60).padStart(2, "0")}<span>Appuyez sur Stop pour terminer</span></div>}
+      {draft.editingId && <div className="editing-note">Modification du constat<button onClick={() => onDraft(emptyDraft(draft.visitId, draft.zoneId))}>Annuler</button></div>}
+      {(draft.audio || draft.photos.length > 0) && <><p className="composer-context">Le texte accompagne votre note vocale et vos photos.</p><div className="draft-attachments">{draft.audio && <div className="draft-audio"><Media item={draft.audio} /><button aria-label="Retirer la note vocale" onClick={() => onDraft({ audio: undefined })}><X size={18} aria-hidden="true" /></button></div>}<div className="draft-photos">{draft.photos.map((photo) => <div key={photo.id}><Media item={photo} photo /><button aria-label="Retirer la photo" onClick={() => onDraft({ photos: draft.photos.filter((item) => item.id !== photo.id) })}><X size={18} aria-hidden="true" /></button></div>)}</div></div></>}
+      {content && <div className="severity-options" role="group" aria-label="Gravité du constat">{(Object.keys(SEVERITY) as Severity[]).map((value) => <button key={value} className={`sev-${value}`} aria-pressed={draft.severity === value} onClick={() => onDraft({ severity: value })}>{SEVERITY[value]}</button>)}</div>}
+      <div className={`composer ${content ? "has-draft" : ""}`}><div className="attachment-control" ref={menu}><button className="composer-tool" aria-label="Ajouter une photo ou une note vocale" aria-expanded={attachmentOpen} onClick={() => setAttachmentOpen(!attachmentOpen)}><Camera size={22} aria-hidden="true" /></button>{attachmentOpen && <div className="attachment-menu"><button onClick={() => { setAttachmentOpen(false); onPhoto("camera"); }}><Camera size={20} aria-hidden="true" />Prendre une photo</button><button onClick={() => { setAttachmentOpen(false); onPhoto("library"); }}><Images size={20} aria-hidden="true" />Importer des photos</button>{content && <button onClick={() => { setAttachmentOpen(false); onRecord(); }} disabled={recording}><Mic size={20} aria-hidden="true" />{draft.audio ? "Remplacer la note vocale" : "Ajouter une note vocale"}</button>}</div>}</div>
+        <textarea ref={textarea} rows={1} value={draft.text} aria-label="Décrire un constat" placeholder="Décrire un constat…" onChange={(event) => onDraft({ text: event.target.value })} />
+        {recording || !content ? <button className={`mic-button ${recording ? "recording" : ""}`} aria-label={recording ? "Arrêter l’enregistrement" : "Enregistrer une note vocale"} onClick={onRecord}>{recording ? <Square size={20} aria-hidden="true" /> : <Mic size={22} aria-hidden="true" />}</button> : <button className="send-button" disabled={busy} aria-label={draft.editingId ? "Enregistrer les modifications" : "Ajouter le constat"} onClick={onSubmit}>{busy ? <LoaderCircle size={22} className="saving-spinner" aria-hidden="true" /> : <Check size={23} aria-hidden="true" />}</button>}
+      </div>
+    </>}
+      <div className="zone-navigation"><button disabled={zoneIndex === 0} onClick={() => onNavigate(zoneIndex - 1)}><ArrowLeft size={18} aria-hidden="true" />Précédente</button><button className="next-zone" onClick={onNext}><span><small>{zoneIndex === ZONES.length - 1 ? "Dernière zone" : "Zone suivante"}</small><strong>{zoneIndex === ZONES.length - 1 ? "Vérifier la visite" : ZONES[zoneIndex + 1].label}</strong></span><ArrowRight size={18} aria-hidden="true" /></button></div>
+    </footer>
+  </section>;
+}
+
+function HomeScreen({ field, onStart, showInstall, onInstall, onHideInstall, onSaveProperty, onActions }: { field: VistaFieldState; onStart: () => void; showInstall: boolean; onInstall: () => void; onHideInstall: () => void; onSaveProperty: (property: VistaProperty) => Promise<boolean>; onActions: () => void }) {
+  const [editingProperty, setEditingProperty] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const { visit, zones, actions, property } = field;
+  const openActions = actions.filter((item) => (item.propertyId ? item.propertyId === property.id : item.propertyName === property.name) && item.status === "open");
+  const open = openActions.length; const urgent = openActions.filter((item) => item.severity === "urgent").length;
+  const selected = field.observations.filter((item) => item.createAction).length;
+  const phone = property.guardianPhone?.replace(/[^+\d]/g, "");
+  const today = new Date(visit.scheduledAt).toDateString() === new Date().toDateString();
+  return <><section className="welcome-block"><p className="eyebrow">{formatDate(new Date().toISOString())}</p><h1>Bonjour Nicolas</h1><p>{today ? "1 visite aujourd’hui" : "1 visite planifiée"}</p></section>
+    <section className="visit-card"><div className="visit-card-topline"><span className="visit-tag">À {formatTime(visit.scheduledAt)}</span><span className="visit-type">{visit.status === "completed" ? "Visite clôturée" : "Visite technique"}</span></div><div className="residence-heading"><div><h2>{visit.propertyName}</h2><p>{visit.address}</p></div><a className="icon-button" href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(visit.address)}`} target="_blank" rel="noreferrer" aria-label="Itinéraire vers la résidence"><MapPin size={20} aria-hidden="true" /></a></div>
+      <section className="property-access" aria-label="Accès et contacts de la copropriété"><div className="access-heading"><strong>Accès et contacts</strong><button className="text-button" onClick={() => setEditingProperty(true)}><Pencil size={16} aria-hidden="true" />{property.guardianName || property.guardianPhone || property.accessCodes || property.usefulInfo ? "Modifier les accès" : "Renseigner les accès"}</button></div>
+        {property.guardianName || property.guardianPhone ? <div className="property-detail"><strong>Gardien</strong><div><span>{property.guardianName || "Contact de la résidence"}</span>{property.guardianPhone && (phone && /\d/.test(phone) ? <a className="guardian-phone" href={`tel:${phone}`}><Phone size={16} aria-hidden="true" />{property.guardianPhone}</a> : <span>{property.guardianPhone}</span>)}</div></div> : null}
+        {property.accessCodes && <div className="property-detail"><strong>Codes</strong><span className="access-copy">{property.accessCodes}</span></div>}
+        {property.usefulInfo && <div className="property-detail"><strong>Infos utiles</strong><span className="access-copy">{property.usefulInfo}</span></div>}
+        {!property.guardianName && !property.guardianPhone && !property.accessCodes && !property.usefulInfo && <p className="access-empty">Ajoutez le gardien, son téléphone, les codes et les consignes utiles sur place.</p>}
+      </section>
+      <button className="property-followup" onClick={onActions}><ListChecks size={19} aria-hidden="true" /><span><strong>Suivi des actions</strong><small>{open ? `${open} action${open > 1 ? "s" : ""} ouverte${open > 1 ? "s" : ""} à vérifier` : "Aucune action ouverte"}{urgent ? ` · ${urgent} urgente${urgent > 1 ? "s" : ""}` : ""}</small>{visit.status !== "completed" && selected > 0 && <small>{selected} action(s) sélectionnée(s) pour la clôture de cette visite</small>}</span><ChevronRight size={19} aria-hidden="true" /></button>
+      <div className="zone-overview"><strong>{zones.length} zones</strong><span>Toiture → Sous-sol</span></div><Segments zones={zones} observations={field.observations} /><div className="severity-legend" aria-label="Repères de gravité"><span className="legend-urgent">Urgent</span><span className="legend-planned">À planifier</span><span className="legend-info">Pour info</span></div><button className="primary-action" onClick={onStart}>{visit.status === "completed" ? "Consulter la visite" : visit.status === "in_progress" ? "Reprendre la visite" : "Commencer la visite"}<ArrowRight size={20} aria-hidden="true" /></button>
+    </section>
+    {showInstall && <aside className="install-card"><span className="install-icon"><Download size={22} aria-hidden="true" /></span><div><strong>Travailler sans réseau</strong><small>Installez VISTA sur l’écran d’accueil</small></div><button className="text-button" onClick={onInstall}>Installer</button><button className="plain-icon" aria-label="Masquer ce conseil" onClick={onHideInstall}><X size={18} aria-hidden="true" /></button></aside>}
+    {editingProperty && <Sheet title="Accès de la copropriété" onClose={() => setEditingProperty(false)}><h2>Accès et contacts</h2><p>{property.name}</p><form onSubmit={async (event) => {
+      event.preventDefault(); const data = new FormData(event.currentTarget); const value = (key: string) => String(data.get(key) ?? "").trim() || undefined;
+      setSubmitting(true);
+      if (await onSaveProperty({ ...property, guardianName: value("guardianName"), guardianPhone: value("guardianPhone"), accessCodes: value("accessCodes"), usefulInfo: value("usefulInfo"), updatedAt: new Date().toISOString() })) setEditingProperty(false);
+      setSubmitting(false);
+    }}><label className="form-field">Gardien / contact<input name="guardianName" defaultValue={property.guardianName} autoComplete="off" /></label><label className="form-field">Téléphone du gardien<input name="guardianPhone" type="tel" defaultValue={property.guardianPhone} autoComplete="off" /></label><label className="form-field">Codes d’accès<textarea name="accessCodes" rows={3} defaultValue={property.accessCodes} autoComplete="off" placeholder="Une ligne par entrée, portail ou bâtiment" /></label><label className="form-field">Informations utiles<textarea name="usefulInfo" rows={3} defaultValue={property.usefulInfo} placeholder="Horaires du gardien, clés, accès parking, consignes…" /></label><p className="privacy-note">Conservé uniquement sur cet appareil pour la démo, sans chiffrement applicatif. Évitez les codes réels sur un appareil partagé.</p><button className="primary-action" disabled={submitting}>Enregistrer les accès<Check size={20} aria-hidden="true" /></button></form></Sheet>}
+  </>;
+}
+
+function ReviewScreen({ field, busy, recording, drafts, onBack, onZone, onAction, onClose, onReopen, onActions, onReset }: { field: VistaFieldState; busy: boolean; recording: boolean; drafts: Record<string, VistaDraft>; onBack: () => void; onZone: (index: number) => void; onAction: (item: VistaObservation) => void; onClose: () => Promise<void>; onReopen: () => Promise<void>; onActions: () => void; onReset: () => Promise<void> }) {
+  const [confirmation, setConfirmation] = useState<"close" | "reset" | null>(null);
+  const { visit, zones, observations } = field; const readonly = visit.status === "completed";
+  const pending = zones.filter((item) => item.status === "pending"); const selected = observations.filter((item) => item.createAction).length;
+  const actionCopy = selected ? `${selected} action${selected > 1 ? "s seront ajoutées" : " sera ajoutée"} au suivi.` : "Aucune action ne sera créée.";
+  const sorted = [...observations].sort((a, b) => ({ urgent: 0, planned: 1, info: 2 }[a.severity ?? "info"] - { urgent: 0, planned: 1, info: 2 }[b.severity ?? "info"]) || zones.findIndex((zone) => zone.zoneId === a.zoneId) - zones.findIndex((zone) => zone.zoneId === b.zoneId));
+  const unsent = Object.values(drafts).filter(hasContent).length;
+  return <section className="review-screen"><div className="review-top"><button className="text-button" onClick={onBack}><ArrowLeft size={18} aria-hidden="true" />Revenir à la visite</button><Saved busy={busy} error="" /></div><p className="eyebrow">Contrôle de fin de visite</p><h1>{readonly ? "Visite clôturée" : pending.length ? `Encore ${pending.length} zone${pending.length > 1 ? "s" : ""} à renseigner` : "Prêt à clôturer"}</h1><p className="review-intro">{visit.propertyName} · {readonly ? "lecture seule" : formatDate(visit.scheduledAt)}</p>
+    {readonly && <div className="closed-card"><Check size={24} aria-hidden="true" /><strong>Enregistrée sur l’appareil</strong><p>{field.actions.filter((item) => item.visitId === visit.id).length} action(s) dans le suivi. Le compte rendu PDF et l’envoi seront ajoutés dans un prochain lot.</p><div className="button-pair"><button className="primary-action" onClick={onActions}>Voir les actions<ArrowRight size={18} aria-hidden="true" /></button><button className="secondary-action" disabled={busy} onClick={onReopen}>Rouvrir</button></div></div>}
+    {!readonly && pending.map((zone) => <div className="blocking-card" key={zone.id}><strong>{zone.zoneLabel} sans statut</strong><p>Indiquez « Rien à signaler », ajoutez un constat ou marquez la zone non accessible.</p><button onClick={() => onZone(zone.order)}>Compléter {zone.zoneLabel}<ArrowRight size={18} aria-hidden="true" /></button></div>)}
+    <div className="review-grid"><div><strong>{zones.length - pending.length}/{zones.length}</strong><span>zones</span></div><div><strong className="observed-text">{observations.length}</strong><span>constats</span></div><div><strong className="urgent-text">{observations.filter((item) => item.severity === "urgent").length}</strong><span>urgents</span></div><div><strong className="inaccessible-text">{zones.filter((item) => item.status === "inaccessible").length}</strong><span>inaccessibles</span></div></div>
+    <div className="section-title"><h2>Constats</h2>{!readonly && <small>{actionCopy}</small>}</div><div className="capture-feed review-feed">{sorted.map((item) => <ObservationCard key={item.id} item={item} readonly={readonly} onAction={onAction} showZone />)}{!sorted.length && <p className="muted">Aucun constat ajouté.</p>}</div>
+    <div className="section-title"><h2>Zones</h2><small>{zones.length - pending.length}/{zones.length} renseignées</small></div><ZoneList field={field} drafts={drafts} onZone={onZone} />
+    {!readonly && unsent > 0 && <p className="draft-warning">{unsent} brouillon(s) ne figurent pas parmi les constats. Ajoutez-les avant de clôturer s’ils doivent être pris en compte ; sinon ils resteront conservés pour une réouverture.</p>}
+    {!readonly && (confirmation === "close" ? <div className="confirmation"><h2>Clôturer la visite ?</h2><p>{actionCopy} La visite passera en lecture seule ; vous pourrez la rouvrir.</p><div className="button-pair"><button className="secondary-action" onClick={() => setConfirmation(null)}>Annuler</button><button className="primary-action" disabled={busy || recording || pending.length > 0} onClick={async () => { await onClose(); setConfirmation(null); }}>Oui, clôturer<Check size={18} aria-hidden="true" /></button></div></div> : <><button className="primary-action review-primary" disabled={pending.length > 0 || busy || recording} onClick={() => setConfirmation("close")}>Clôturer la visite<Check size={20} aria-hidden="true" /></button><p className={pending.length ? "inaccessible-text" : "muted"}>{pending.length ? `Renseignez ${pending.length === 1 ? pending[0].zoneLabel : `${pending.length} zones`} pour clôturer.` : "Après clôture, la visite passe en lecture seule."}</p></>)}
+    {confirmation === "reset" ? <div className="confirmation"><h2>Réinitialiser la démonstration ?</h2><p>Cette visite, ses constats, ses brouillons et ses actions seront effacés de cet appareil. Cette opération est irréversible.</p><div className="button-pair"><button className="secondary-action" onClick={() => setConfirmation(null)}>Annuler</button><button className="primary-action" disabled={busy} onClick={onReset}>Effacer la démo</button></div></div> : <button className="danger-link" onClick={() => setConfirmation("reset")}>Réinitialiser la démonstration</button>}
+  </section>;
+}
+
+function ActionsScreen({ field, onSave }: { field: VistaFieldState; onSave: (action: FollowUpAction) => Promise<boolean> }) {
+  const [filter, setFilter] = useState<"open" | "urgent" | "done">("open"); const [assign, setAssign] = useState<FollowUpAction | null>(null); const [submitting, setSubmitting] = useState(false);
+  const groups = { open: field.actions.filter((item) => item.status === "open"), urgent: field.actions.filter((item) => item.status === "open" && item.severity === "urgent"), done: field.actions.filter((item) => item.status === "done") };
+  const items = groups[filter]; const visitIds = [...new Set(items.map((item) => item.visitId))];
+  return <section className="secondary-screen"><p className="eyebrow">Suivi technique</p><h1>Actions</h1><div className="action-filters" role="group" aria-label="Filtrer les actions">{(["open", "urgent", "done"] as const).map((key) => <button key={key} aria-pressed={filter === key} onClick={() => setFilter(key)}>{({ open: "À faire", urgent: "Urgentes", done: "Faites" })[key]}<b>{groups[key].length}</b></button>)}</div>
+    {!items.length && <div className="empty-list"><ListChecks size={30} aria-hidden="true" /><h2>{!field.actions.length ? "Aucune action en attente" : filter === "urgent" ? "Aucune action urgente." : filter === "done" ? "Aucune action terminée pour l’instant." : "Tout est fait."}</h2>{!field.actions.length && <p>Les actions sélectionnées dans vos constats apparaîtront ici après clôture de la visite.</p>}</div>}
+    {visitIds.map((id) => <div className="action-group" key={id}><h2>{items.find((item) => item.visitId === id)?.propertyName}</h2><p>Visite technique {id === field.visit.id ? `du ${new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "long" }).format(new Date(field.visit.scheduledAt))}` : ""}</p>{items.filter((item) => item.visitId === id).map((item) => <article className="capture-card action-card" key={item.id}><div className="capture-meta"><b className={`severity sev-${item.severity}`}>{SEVERITY[item.severity]}</b><span>{item.zoneLabel}</span></div><p className={item.status === "done" ? "done-copy" : ""}>{item.text}</p><dl><div><dt>Intervenant</dt><dd>{item.assignee || "À désigner"}</dd></div><div><dt>Échéance</dt><dd>{item.dueDate ? new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "long", year: "numeric" }).format(new Date(`${item.dueDate}T12:00:00`)) : "À fixer"}</dd></div></dl><div className="button-pair"><button className="secondary-action" onClick={() => setAssign(item)}>Assigner</button><button className="soft-action" disabled={submitting} onClick={async () => { setSubmitting(true); const now = new Date().toISOString(); await onSave({ ...item, status: item.status === "done" ? "open" : "done", doneAt: item.status === "done" ? undefined : now, updatedAt: now }); setSubmitting(false); }}>{item.status === "done" ? "Rouvrir" : "Marquer faite"}<Check size={18} aria-hidden="true" /></button></div></article>)}</div>)}
+    {assign && <Sheet title="Assigner une action" onClose={() => setAssign(null)}><h2>Assigner une action</h2><p>{assign.zoneLabel} · {assign.propertyName}</p><form onSubmit={async (event) => { event.preventDefault(); const data = new FormData(event.currentTarget); setSubmitting(true); if (await onSave({ ...assign, assignee: String(data.get("assignee") ?? "").trim() || undefined, dueDate: String(data.get("dueDate") ?? "") || undefined, updatedAt: new Date().toISOString() })) setAssign(null); setSubmitting(false); }}><label className="form-field">Intervenant<input name="assignee" defaultValue={assign.assignee} placeholder="Entreprise ou personne" /></label><label className="form-field">Échéance<input name="dueDate" type="date" defaultValue={assign.dueDate} /></label><button className="primary-action" disabled={submitting}>Enregistrer<Check size={20} aria-hidden="true" /></button></form></Sheet>}
+  </section>;
 }
