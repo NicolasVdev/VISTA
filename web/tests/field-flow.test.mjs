@@ -15,7 +15,7 @@ try {
   playwright = require("playwright");
 } catch { /* Static build tests remain available without browser tooling. */ }
 
-test("field UX and IndexedDB v2 → v5 regression suite", { skip: !playwright }, async (t) => {
+test("field UX and IndexedDB v2 → v6 regression suite", { skip: !playwright }, async (t) => {
   const server = await createServer({ server: { host: "127.0.0.1", port: 0, watch: { ignored: ["**/artifacts/**"] } }, logLevel: "error" });
   await server.listen();
   const origin = server.resolvedUrls.local[0];
@@ -276,7 +276,7 @@ test("field UX and IndexedDB v2 → v5 regression suite", { skip: !playwright },
         await navigator.serviceWorker.ready;
         if (!navigator.serviceWorker.controller) await new Promise((resolve) => navigator.serviceWorker.addEventListener("controllerchange", resolve, { once: true }));
       });
-      const keys = await offlinePage.evaluate(async () => (await (await caches.open("vista-shell-v4")).keys()).map((request) => new URL(request.url).pathname));
+      const keys = await offlinePage.evaluate(async () => (await (await caches.open("vista-shell-v5")).keys()).map((request) => new URL(request.url).pathname));
       assert.equal(keys.some((key) => /\/assets\/.+\.js$/.test(key)), true);
       assert.equal(keys.some((key) => /\/assets\/.+\.css$/.test(key)), true);
       assert.equal(keys.includes("/fonts/figtree-latin-wght-normal.woff2"), true);
@@ -371,6 +371,8 @@ test("field UX and IndexedDB v2 → v5 regression suite", { skip: !playwright },
       await db.saveDraft({ id: `${visitId}:chaufferie`, visitId, zoneId: "chaufferie", text: "Brouillon à conserver", severity: "info", photos: [], audio });
       state = await db.loadFieldState(templates); await db.saveZoneProgress({ ...state.zones[1], status: "inaccessible", inaccessibleReason: "missing_key" });
       await db.closeFieldVisit(visitId); state = await db.loadFieldState(templates);
+      await db.splitAction(state.actions.find((item) => item.visitId === visitId).id, [{ text: "Réparer l’étanchéité", assignee: "Entreprise toiture", dueDate: "2026-10-07", severity: "urgent" }, { text: "Contrôler la peinture", assignee: "Entreprise peinture", dueDate: "2026-10-21", severity: "planned" }]);
+      state = await db.loadFieldState(templates);
       const pdf = await exporter.generateVisitPdf(state); const archive = await exporter.generateVisitArchive(state);
       const zip = await new window.JSZip().loadAsync(archive); const json = await zip.file("visite.json").async("string");
       const media = await zip.file("medias/qa-audio.webm").async("string");
@@ -389,8 +391,86 @@ test("field UX and IndexedDB v2 → v5 regression suite", { skip: !playwright },
     await exportPage.getByRole("button", { name: "Compte rendu et sauvegarde", exact: true }).click();
     await exportPage.getByRole("checkbox").check(); await exportPage.getByRole("button", { name: "Préparer le PDF", exact: true }).click();
     await exportPage.getByRole("link", { name: "Télécharger le PDF", exact: true }).waitFor();
+    await exportPage.getByRole("button", { name: "Consulter la version 1", exact: true }).waitFor();
+    await exportPage.getByRole("button", { name: "Fermer", exact: true }).click();
+    await exportPage.reload(); await exportPage.getByRole("button", { name: "Consulter la visite", exact: true }).click();
+    await exportPage.getByRole("button", { name: "Compte rendu et sauvegarde", exact: true }).click();
+    await exportPage.getByRole("button", { name: "Consulter la version 1", exact: true }).click();
+    await exportPage.getByRole("link", { name: "Ouvrir le PDF", exact: true }).waitFor();
+    const storedReports = await exportPage.evaluate(async () => { const db = await import("/app/lib/vista-db.ts"); const state = await db.loadFieldState([{ id: "toiture", label: "Toiture", hint: "" }]); const exp = await import("/app/lib/vista-export.ts"); const archive = await exp.generateVisitArchive(state); const zip = await new window.JSZip().loadAsync(archive); return { count: state.reports.length, size: state.reports[0].blob.size, inBackup: Boolean(zip.file("comptes-rendus/v1.pdf")) }; });
+    assert.equal(storedReports.count, 1); assert.ok(storedReports.size > 5000); assert.equal(storedReports.inBackup, true);
     await exportPage.screenshot({ path: fileURLToPath(new URL("../artifacts/beta-export-mobile.png", import.meta.url)) });
     assert.equal(await exportPage.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    await exportPage.evaluate(async () => { const db = await import("/app/lib/vista-db.ts"); const state = await db.loadFieldState([{ id: "toiture", label: "Toiture", hint: "" }]); await db.saveAction({ ...state.actions.find((item) => item.visitId === state.visit.id), assignee: "Entreprise modifiée", updatedAt: new Date().toISOString() }); });
+    await exportPage.reload(); await exportPage.getByRole("button", { name: "Consulter la visite", exact: true }).click();
+    await exportPage.getByRole("button", { name: "Compte rendu et sauvegarde", exact: true }).click();
+    await exportPage.getByText("Version antérieure : la visite ou les actions ont changé depuis ce PDF.", { exact: true }).waitFor();
+    await exportPage.getByRole("checkbox").check(); await exportPage.getByRole("button", { name: "Préparer le PDF", exact: true }).click();
+    await exportPage.getByRole("button", { name: "Consulter la version 2", exact: true }).waitFor();
     await exportContext.close();
+  });
+
+  await t.test("dialogs center on desktop and scroll to their last control on short mobile", async () => {
+    const modalContext = await browser.newContext({ viewport: { width: 1440, height: 900 } }); const modal = await modalContext.newPage();
+    await modal.goto(origin); await modal.getByRole("button", { name: "Nouvelle visite", exact: true }).click();
+    const bounds = await modal.getByRole("dialog").boundingBox();
+    assert.ok(Math.abs(bounds.x + bounds.width / 2 - 720) < 2);
+    assert.ok(Math.abs(bounds.y + bounds.height / 2 - 450) < 2);
+    const scrollable = await modal.locator(".sheet-body").evaluate((element) => element.scrollHeight > element.clientHeight);
+    assert.equal(scrollable, true);
+    await modal.getByRole("button", { name: "Créer la visite", exact: true }).scrollIntoViewIfNeeded();
+    assert.ok((await modal.getByRole("button", { name: "Créer la visite", exact: true }).boundingBox()).y < 900);
+    await modal.screenshot({ path: fileURLToPath(new URL("../artifacts/modal-desktop.png", import.meta.url)) });
+    await modal.setViewportSize({ width: 360, height: 480 });
+    await modal.getByLabel("Gestionnaire", { exact: true }).focus();
+    await modal.getByRole("button", { name: "Créer la visite", exact: true }).scrollIntoViewIfNeeded();
+    const mobileBounds = await modal.getByRole("dialog").boundingBox();
+    assert.ok(mobileBounds.y >= 0); assert.ok(mobileBounds.y + mobileBounds.height <= 480);
+    const lastControl = await modal.getByRole("button", { name: "Créer la visite", exact: true }).boundingBox();
+    assert.ok(lastControl.y + lastControl.height <= 480);
+    assert.equal(await modal.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    await modal.screenshot({ path: fileURLToPath(new URL("../artifacts/modal-short-mobile.png", import.meta.url)) });
+    await modalContext.close();
+  });
+
+  await t.test("overview exposes all planned visits and asks for each author", async () => {
+    const overviewContext = await browser.newContext(); const overview = await overviewContext.newPage(); await overview.goto(origin);
+    await overview.evaluate(async () => { const db = await import("/app/lib/vista-db.ts"); for (const day of [9, 7, 8]) await db.createFieldVisit({ propertyName: `Visite du ${day}`, address: "Adresse fictive", managerName: "Alice", scheduledAt: `2026-10-0${day}T08:00:00Z` }, [{ id: `zone-${day}`, label: "Hall", hint: "" }]); });
+    await overview.reload(); const cards = overview.locator(".overview-visit"); await cards.first().waitFor();
+    assert.equal(await cards.count(), 4);
+    const names = await cards.allTextContents(); assert.ok(names.findIndex((item) => item.includes("Visite du 7")) < names.findIndex((item) => item.includes("Visite du 8")));
+    await cards.filter({ hasText: "Visite du 7" }).click();
+    await overview.locator(".visit-card h2").filter({ hasText: "Visite du 7" }).waitFor();
+    await overview.getByRole("button", { name: "Nouvelle visite", exact: true }).click();
+    assert.equal(await overview.getByLabel("Gestionnaire", { exact: true }).inputValue(), "");
+    await overview.getByRole("button", { name: "Fermer", exact: true }).click();
+    await overview.locator(".install-card-main").click(); await overview.getByRole("dialog", { name: "Installer VISTA" }).waitFor();
+    await overviewContext.close();
+  });
+
+  await t.test("split actions retain independent assignments through reopening and undo", async () => {
+    const splitContext = await browser.newContext(); const split = await splitContext.newPage(); await split.goto(origin);
+    await split.evaluate(async () => { const db = await import("/app/lib/vista-db.ts"); const templates = [{ id: "hall", label: "Hall", hint: "" }]; const now = new Date().toISOString(); const id = await db.createFieldVisit({ propertyName: "Copro test", address: "Adresse test", managerName: "Bob", scheduledAt: now }, templates); await db.saveObservation({ id: "multi", visitId: id, zoneId: "hall", zoneLabel: "Hall", text: "Réparer la porte et repeindre le palier", photos: [], severity: "urgent", createAction: true, createdAt: now, updatedAt: now, syncStatus: "local" }); await db.closeFieldVisit(id); });
+    await split.reload(); await split.getByRole("button", { name: "Actions", exact: true }).click();
+    await split.getByRole("button", { name: "Scinder en plusieurs actions", exact: true }).click();
+    await split.getByLabel("Description de l’action 1", { exact: true }).fill("Réparer la porte");
+    await split.getByLabel("Entreprise / intervenant 1", { exact: true }).fill("Serrurier");
+    await split.getByLabel("Échéance de l’action 1", { exact: true }).fill("2026-10-07");
+    await split.getByLabel("Description de l’action 2", { exact: true }).fill("Repeindre le palier");
+    await split.getByLabel("Entreprise / intervenant 2", { exact: true }).fill("Peintre");
+    await split.getByLabel("Échéance de l’action 2", { exact: true }).fill("2026-10-20");
+    await split.getByLabel("Urgence de l’action 2", { exact: true }).selectOption("planned");
+    await split.getByRole("button", { name: "Enregistrer les actions séparées", exact: true }).click();
+    await split.getByRole("dialog").waitFor({ state: "hidden" }); assert.equal(await split.locator(".action-card").count(), 2);
+    const result = await split.evaluate(async () => { const db = await import("/app/lib/vista-db.ts"); const templates = [{ id: "hall", label: "Hall", hint: "" }]; let state = await db.loadFieldState(templates); await db.reopenFieldVisit(state.visit.id); await db.closeFieldVisit(state.visit.id); state = await db.loadFieldState(templates); const actions = state.actions; await db.reopenFieldVisit(state.visit.id); const removed = await db.deleteObservation(state.observations[0]); const empty = await db.loadFieldState(templates); await db.restoreObservation(state.observations[0], removed); const restored = await db.loadFieldState(templates); return { actions, remaining: empty.actions.length, restored: restored.actions.length, source: restored.observations[0].text }; });
+    assert.equal(result.actions.length, 2); assert.deepEqual(result.actions.map((item) => item.assignee).sort(), ["Peintre", "Serrurier"]);
+    assert.deepEqual(result.actions.map((item) => item.dueDate).sort(), ["2026-10-07", "2026-10-20"]);
+    assert.equal(result.remaining, 0); assert.equal(result.restored, 2); assert.equal(result.source, "Réparer la porte et repeindre le palier");
+    await splitContext.close();
+  });
+
+  await t.test("integration ports fail closed and calendar payload excludes private access", async () => {
+    const result = await page.evaluate(async () => { const integration = await import("/app/lib/integrations.ts"); const db = await import("/app/lib/vista-db.ts"); const state = await db.loadFieldState([{ id: "toiture", label: "Toiture", hint: "" }]); let disconnected = false; try { integration.integrationWithCapability([], "google-workspace", "calendar"); } catch { disconnected = true; } return { disconnected, event: integration.calendarEventForVisit({ ...state.visit, accessNotes: "SECRET" }, 60, [30, 30, 60]) }; });
+    assert.equal(result.disconnected, true); assert.deepEqual(result.event.reminderMinutes, [30, 60]); assert.equal(JSON.stringify(result.event).includes("SECRET"), false);
   });
 });

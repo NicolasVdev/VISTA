@@ -1,0 +1,9 @@
+import { useState } from "react";
+import { Check } from "lucide-react";
+import type { FollowUpAction, Severity } from "./lib/vista-db";
+export default function ActionEdit({ action, onSave }: { action: FollowUpAction; onSave: (action: FollowUpAction) => Promise<boolean> }) {
+  const [busy, setBusy] = useState(false); const [error, setError] = useState("");
+  return <form onSubmit={async (event) => { event.preventDefault(); const data = new FormData(event.currentTarget); const text = String(data.get("text") ?? "").trim(); const severity = String(data.get("severity")) as Severity; setBusy(true); setError(""); try { if (!await onSave({ ...action, text, severity, sourceEdited: action.sourceEdited || text !== action.text || severity !== action.severity, assignee: String(data.get("assignee") ?? "").trim() || undefined, dueDate: String(data.get("dueDate") ?? "") || undefined, updatedAt: new Date().toISOString() })) setError("L’action n’a pas été enregistrée. Réessayez."); } finally { setBusy(false); } }}>
+    <h2>Modifier et assigner une action</h2><p>{action.zoneLabel} · {action.propertyName}</p><label className="form-field">Description<textarea name="text" aria-label="Description de l’action" defaultValue={action.text} rows={3} required /></label><label className="form-field">Urgence<select name="severity" aria-label="Urgence de l’action" defaultValue={action.severity}><option value="urgent">Urgent</option><option value="planned">À planifier</option><option value="info">Pour info</option></select></label><label className="form-field">Intervenant<input name="assignee" defaultValue={action.assignee} placeholder="Entreprise ou personne" /></label><label className="form-field">Échéance<input name="dueDate" type="date" defaultValue={action.dueDate} /></label>{error && <p role="alert">{error}</p>}<button className="primary-action" disabled={busy}>Enregistrer<Check size={20} aria-hidden="true" /></button>
+  </form>;
+}

@@ -532,6 +532,40 @@ p { margin: 0 0 12px; }
 .export-backup button { width: 100%; }
 .prepared-export { display: grid; gap: 12px; padding: 16px; margin-top: 20px; border-radius: 16px; background: var(--brand-soft); }
 .prepared-export small { overflow-wrap: anywhere; color: var(--muted); }
+
+/* Dialogs are portaled outside the page: desktop modal, mobile bottom sheet. */
+.sheet-backdrop { height: 100dvh; align-items: flex-end; overflow: hidden; }
+.install-sheet { flex: 0 1 560px; min-height: 0; max-height: calc(100dvh - 16px); overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; scrollbar-width: auto; scrollbar-color: var(--brand) var(--line-soft); padding-bottom: calc(24px + env(safe-area-inset-bottom)); }
+.install-sheet::-webkit-scrollbar { width: 10px; }
+.install-sheet::-webkit-scrollbar-thumb { background: var(--brand); border: 2px solid var(--surface); border-radius: 12px; }
+.install-sheet::-webkit-scrollbar-track { background: var(--line-soft); }
+@media (min-width: 760px) { .sheet-backdrop { align-items: center; padding: 24px; } .install-sheet { border-radius: 24px; max-height: calc(100dvh - 48px); } .sheet-handle { display: none; } .install-sheet { padding-top: 24px; } }
+.home-visits { margin: 16px 0 24px; }
+.overview-visit { width: 100%; margin-top: 8px; text-align: left; }
+.overview-visit[aria-pressed="true"] { border: 2px solid var(--brand); background: var(--brand-soft); }
+.overview-visit small { white-space: normal; }
+.install-card { grid-template-columns: minmax(0,1fr) auto; }
+.install-card-main { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 64px; border: 0; background: transparent; color: var(--foreground); text-align: left; cursor: pointer; padding: 8px; }
+.install-card-main > span { flex: 1; }
+.saved-reports { border-bottom: 1px solid var(--line); padding-bottom: 20px; margin-bottom: 20px; }
+.saved-reports article { margin-top: 16px; }
+.saved-reports strong { display: block; margin-bottom: 8px; }
+.saved-reports p, .source-quote { font-size: 14px; line-height: 1.5; }
+.split-entry { border: 1px solid var(--line); border-radius: 16px; padding: 14px; margin: 12px 0; }
+.action-split fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+.source-quote { margin: 12px 0; padding: 12px; background: var(--brand-soft); border-radius: 12px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 160px; overflow-y: auto; }
+.form-field select { min-height: 44px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); padding: 10px; font: inherit; }
+.split-trigger { margin-top: 12px; }
+@media (max-width: 370px) { .install-card { grid-template-columns: minmax(0,1fr) auto; } }
+
+.install-sheet { display: flex; flex-direction: column; overflow: hidden; padding: 0; }
+.sheet-header { position: relative; flex: 0 0 58px; border-bottom: 1px solid var(--line-soft); }
+.sheet-header .sheet-handle { margin: 10px auto 0; }
+.sheet-header .sheet-close { top: 7px; right: 14px; }
+.sheet-body { flex: 1 1 auto; min-height: 0; padding: 18px 20px calc(24px + env(safe-area-inset-bottom)); overflow-y: scroll; overscroll-behavior: contain; scrollbar-gutter: stable; scrollbar-width: auto; scrollbar-color: var(--brand) var(--line-soft); }
+.sheet-body::-webkit-scrollbar { width: 10px; }
+.sheet-body::-webkit-scrollbar-thumb { background: var(--brand); border: 2px solid var(--surface); border-radius: 12px; }
+.sheet-body::-webkit-scrollbar-track { background: var(--line-soft); }
 .prepared-export a { text-decoration: none; }
 .prepared-export p { margin: 0; font-size: 13px; color: var(--muted); }
 .export-main { margin-bottom: 12px; }

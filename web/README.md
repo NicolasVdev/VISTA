@@ -30,6 +30,10 @@ Application terrain installable de visites techniques d'immeubles.
 - PDF relu, téléchargeable avec photos légendées, statuts et actions ;
 - sauvegarde ZIP avec données structurées, médias originaux et brouillons ;
 - partage du fichier lorsque le navigateur propose le partage de fichiers.
+- vue d’ensemble sur l’accueil des visites ouvertes, dans l’ordre des dates ;
+- fenêtres centrées sur ordinateur, défilables sur mobile, fermeture toujours accessible ;
+- nouveaux PDF conservés et versionnés localement, avec avertissement si leurs données ont changé ;
+- plusieurs actions par constat : scission manuelle avec intervenants, échéances et urgences indépendants.
 
 La synchronisation serveur, l'authentification et la transcription IA ne sont pas encore connectées. Les audios doivent être écoutés et leur texte complété manuellement pour le PDF. Aucun envoi automatique de mail : télécharger le PDF, le vérifier puis le joindre depuis sa messagerie habituelle. Les tests physiques iPhone/Android restent à faire avant le pilote.
 
@@ -70,6 +74,10 @@ copropriété. Les anciens `accessNotes` sont repris en informations utiles. Le 
 de la visite démo conserve cette fiche.
 
 La version 5 ajoute la sélection de visite (`settings`). Les parcours personnalisés sont des instantanés : ils ne sont pas recréés à partir de la trame démo au redémarrage. Une zone contenant des constats, actions ou brouillons ne peut pas être supprimée. Une nouvelle visite reprend la fiche copropriété si son nom et son adresse correspondent exactement (hors casse). Le reset démo ne supprime pas les visites réelles. La configuration complète d'un portefeuille de copropriétés reste un futur lot.
+
+La version 6 ajoute `reports` : chaque nouvelle génération de PDF conserve un Blob, un numéro de version et la signature des données utilisées. Le fichier peut être rouvert ou téléchargé après fermeture de la fenêtre et redémarrage. Les PDF téléchargés avant cette version ne sont pas récupérables automatiquement. Les versions sont incluses dans le ZIP. L’application ne prétend pas savoir si un téléchargement a réellement été enregistré dans le système de fichiers. L'auteur est demandé à chaque nouvelle visite ; ce champ n'est pas un login. La scission des actions conserve leur référence au constat et n'est pas une segmentation automatique des notes sur plusieurs étages.
+
+Les ports de connexion agenda/GED/annuaire sont préparés dans `app/lib/integrations.ts`, mais aucun compte externe n'est connecté. Voir [l'architecture des connexions et comptes](../INTEGRATIONS-ET-COMPTES.md). Une implémentation serveur, les droits du syndic et la vérification des API restent nécessaires.
 
 Les exports sont produits localement grâce à pdf-lib et JSZip, précachés avec leurs licences dans `public/vendor/`. Le PDF ne contient pas les audios ni les brouillons ; les audios sans texte bloquent sa préparation. Les photos exportées sont redimensionnées et converties en JPEG, sans modifier les originaux. Une photo non décodable (par exemple certains HEIC) provoque une erreur explicite : importer une version JPEG/PNG. Le ZIP conserve les fichiers originaux, mais son import dans l'application reste à implémenter. Les accès privés et contacts sont exclus des deux exports.
 

@@ -3,6 +3,7 @@ export type ZoneStatus = "pending" | "clear" | "observed" | "inaccessible";
 export type Severity = "urgent" | "planned" | "info";
 export type InaccessibleReason = "missing_key" | "locked" | "occupant_absent" | "unsafe" | "other";
 export type FollowUpAction = {
+  sourceEdited?: boolean;
   propertyId?: string;
   id: string; visitId: string; observationId: string; zoneId: string; zoneLabel: string;
   propertyName: string; text: string; severity: Severity; status: "open" | "done";
@@ -73,6 +74,7 @@ export type VistaObservation = {
 };
 
 export type VistaFieldState = {
+  reports: VistaReport[];
   visits: VistaVisit[];
   property: VistaProperty;
   visit: VistaVisit;
@@ -81,6 +83,8 @@ export type VistaFieldState = {
   actions: FollowUpAction[];
   drafts: VistaDraft[];
 };
+
+export type VistaReport = { id: string; visitId: string; version: number; createdAt: string; fileName: string; blob: Blob; sourceSignature: string };
 
 export type VistaProperty = {
   id: string; name: string; address: string; guardianName?: string;
@@ -101,7 +105,7 @@ type LegacyCapture = {
 };
 
 const DATABASE_NAME = "vista-field-drafts";
-const DATABASE_VERSION = 5;
+const DATABASE_VERSION = 6;
 const LEGACY_CAPTURE_STORE = "captures";
 const VISIT_STORE = "visits";
 const ZONE_STORE = "zone-progress";
@@ -116,6 +120,9 @@ function openDatabase(): Promise<IDBDatabase> {
 
     request.onupgradeneeded = () => {
       const database = request.result;
+      if (!database.objectStoreNames.contains("reports")) {
+        const reports = database.createObjectStore("reports", { keyPath: "id" }); reports.createIndex("visitId", "visitId");
+      }
       if (!database.objectStoreNames.contains("settings")) database.createObjectStore("settings", { keyPath: "id" });
       if (!database.objectStoreNames.contains("properties")) database.createObjectStore("properties", { keyPath: "id" });
       for (const name of ["actions", "drafts"]) {
@@ -225,6 +232,7 @@ function legacyToObservation(capture: LegacyCapture): VistaObservation {
 }
 
 async function readState(requestedVisitId?: string): Promise<{
+  reports: VistaReport[];
   visits: VistaVisit[];
   visit?: VistaVisit;
   zones: VistaZoneProgress[];
@@ -236,7 +244,7 @@ async function readState(requestedVisitId?: string): Promise<{
 }> {
   const database = await openDatabase();
   const transaction = database.transaction(
-    [VISIT_STORE, ZONE_STORE, OBSERVATION_STORE, LEGACY_CAPTURE_STORE, "actions", "drafts", "properties", "settings"],
+    [VISIT_STORE, ZONE_STORE, OBSERVATION_STORE, LEGACY_CAPTURE_STORE, "actions", "drafts", "properties", "settings", "reports"],
     "readonly",
   );
   const completion = transactionComplete(transaction);
@@ -245,7 +253,7 @@ async function readState(requestedVisitId?: string): Promise<{
   const observationRequest = transaction.objectStore(OBSERVATION_STORE).getAll();
   const legacyRequest = transaction.objectStore(LEGACY_CAPTURE_STORE).getAll();
 
-  const [visits, allZones, allObservations, legacyCaptures, actions, allDrafts, properties, selection] = await Promise.all([
+  const [visits, allZones, allObservations, legacyCaptures, actions, allDrafts, properties, selection, reports] = await Promise.all([
     requestResult(visitRequest) as Promise<VistaVisit[]>,
     requestResult(zoneRequest) as Promise<VistaZoneProgress[]>,
     requestResult(observationRequest) as Promise<VistaObservation[]>,
@@ -254,12 +262,13 @@ async function readState(requestedVisitId?: string): Promise<{
     requestResult(transaction.objectStore("drafts").getAll()) as Promise<VistaDraft[]>,
     requestResult(transaction.objectStore("properties").getAll()) as Promise<VistaProperty[]>,
     requestResult(transaction.objectStore("settings").get("active-visit")) as Promise<{ value: string } | undefined>,
+    requestResult(transaction.objectStore("reports").getAll()) as Promise<VistaReport[]>,
   ]);
   await completion;
   database.close();
   const visit = visits.find((item) => item.id === (requestedVisitId ?? selection?.value)) ?? visits.find((item) => item.id === DEMO_VISIT_ID) ?? visits[0];
   const visitId = visit?.id ?? DEMO_VISIT_ID;
-  return { visit, visits, zones: allZones.filter((item) => item.visitId === visitId), observations: allObservations.filter((item) => item.visitId === visitId), legacyCaptures, actions, drafts: allDrafts.filter((item) => item.visitId === visitId), properties };
+  return { reports, visit, visits, zones: allZones.filter((item) => item.visitId === visitId), observations: allObservations.filter((item) => item.visitId === visitId), legacyCaptures, actions, drafts: allDrafts.filter((item) => item.visitId === visitId), properties };
 }
 
 async function seedMissingState(
@@ -304,7 +313,7 @@ export async function loadFieldState(templates: ZoneTemplate[], visitId?: string
     .sort((a, b) => a.order - b.order);
 
   const property = stored.properties.find((item) => item.id === visit.propertyId)!;
-  return { visit, property, zones, observations, actions: stored.actions, drafts: stored.drafts, visits: stored.visits.sort((a, b) => b.createdAt.localeCompare(a.createdAt)) };
+  return { reports: stored.reports, visit, property, zones, observations, actions: stored.actions, drafts: stored.drafts, visits: stored.visits.sort((a, b) => b.createdAt.localeCompare(a.createdAt)) };
 }
 
 export async function saveVisit(visit: VistaVisit): Promise<void> {
@@ -339,11 +348,11 @@ export async function saveObservation(observation: VistaObservation, consumeDraf
 export async function resetFieldState(templates: ZoneTemplate[]): Promise<VistaFieldState> {
   const database = await openDatabase();
   const transaction = database.transaction(
-    [VISIT_STORE, ZONE_STORE, OBSERVATION_STORE, LEGACY_CAPTURE_STORE, "actions", "drafts"],
+    [VISIT_STORE, ZONE_STORE, OBSERVATION_STORE, LEGACY_CAPTURE_STORE, "actions", "drafts", "reports"],
     "readwrite",
   );
   transaction.objectStore(VISIT_STORE).delete(DEMO_VISIT_ID);
-  for (const name of [ZONE_STORE, OBSERVATION_STORE, "actions", "drafts"]) {
+  for (const name of [ZONE_STORE, OBSERVATION_STORE, "actions", "drafts", "reports"]) {
     const store = transaction.objectStore(name);
     const rows = await requestResult(store.index("visitId").getAll(DEMO_VISIT_ID)) as { id: string }[];
     rows.forEach((row) => store.delete(row.id));
@@ -437,25 +446,52 @@ export async function saveDraft(draft: VistaDraft) {
 }
 
 export async function deleteObservation(observation: VistaObservation) {
-  let removedAction: FollowUpAction | undefined;
+  let removedActions: FollowUpAction[] = [];
   await mutateVisit(observation.visitId, [OBSERVATION_STORE, ZONE_STORE, "actions"], async (transaction) => {
     const store = transaction.objectStore(OBSERVATION_STORE);
     const items = await requestResult(store.index("visitId").getAll(observation.visitId)) as VistaObservation[];
-    removedAction = await requestResult(transaction.objectStore("actions").get(`action:${observation.id}`)) as FollowUpAction | undefined;
+    const actions = await requestResult(transaction.objectStore("actions").index("visitId").getAll(observation.visitId)) as FollowUpAction[];
+    removedActions = actions.filter((item) => item.observationId === observation.id && item.status === "open");
     store.delete(observation.id);
-    if (removedAction?.status === "open") transaction.objectStore("actions").delete(removedAction.id);
+    removedActions.forEach((item) => transaction.objectStore("actions").delete(item.id));
     if (!items.some((item) => item.id !== observation.id && item.zoneId === observation.zoneId)) {
       const zoneStore = transaction.objectStore(ZONE_STORE);
       const zone = await requestResult(zoneStore.get(`${observation.visitId}:${observation.zoneId}`)) as VistaZoneProgress;
       zoneStore.put({ ...zone, status: "pending", updatedAt: new Date().toISOString() });
     }
   });
-  return removedAction;
+  return removedActions;
 }
 
-export async function restoreObservation(observation: VistaObservation, action?: FollowUpAction) {
+export async function restoreObservation(observation: VistaObservation, actions: FollowUpAction[] = []) {
   await saveObservation(observation);
-  if (action?.status === "open") await saveAction(action);
+  for (const action of actions) if (action.status === "open") await saveAction(action);
+}
+
+export async function splitAction(originalId: string, entries: { text: string; assignee?: string; dueDate?: string; severity: Severity }[]) {
+  if (entries.length < 2 || entries.length > 20 || entries.some((item) => !item.text.trim() || !["urgent", "planned", "info"].includes(item.severity) || (item.dueDate && !/^\d{4}-\d{2}-\d{2}$/.test(item.dueDate)))) throw new Error("Renseignez de 2 à 20 actions distinctes avec des dates valides.");
+  const database = await openDatabase();
+  try {
+    const transaction = database.transaction("actions", "readwrite"); const completion = transactionComplete(transaction); const store = transaction.objectStore("actions");
+    const original = await requestResult(store.get(originalId)) as FollowUpAction | undefined;
+    if (!original || original.status !== "open") { await completion; throw new Error("Seule une action ouverte peut être scindée."); }
+    const now = new Date().toISOString();
+    entries.forEach((entry, index) => store.put({ ...original, ...entry, text: entry.text.trim(), assignee: entry.assignee?.trim() || undefined, dueDate: entry.dueDate || undefined, sourceEdited: true, id: index === 0 ? original.id : `action:${crypto.randomUUID()}`, createdAt: index === 0 ? original.createdAt : now, updatedAt: now }));
+    await completion;
+  } finally { database.close(); }
+}
+
+export async function saveVisitReport(report: Omit<VistaReport, "id" | "version" | "createdAt">): Promise<VistaReport> {
+  const database = await openDatabase();
+  try {
+    const transaction = database.transaction(["reports", VISIT_STORE], "readwrite"); const completion = transactionComplete(transaction); const store = transaction.objectStore("reports");
+    const visit = await requestResult(transaction.objectStore(VISIT_STORE).get(report.visitId)) as VistaVisit | undefined;
+    if (!visit || visit.status !== "completed") { await completion; throw new Error("La visite doit être clôturée pour conserver son PDF."); }
+    const previous = await requestResult(store.index("visitId").getAll(report.visitId)) as VistaReport[];
+    const version = Math.max(0, ...previous.map((item) => item.version)) + 1;
+    const saved = { ...report, id: crypto.randomUUID(), version, createdAt: new Date().toISOString(), fileName: report.fileName.replace(/\.pdf$/, `-v${version}.pdf`) };
+    store.put(saved); await completion; return saved;
+  } finally { database.close(); }
 }
 
 export async function saveAction(action: FollowUpAction) {
@@ -491,8 +527,10 @@ export async function closeFieldVisit(visitId: string) {
     const actions = await requestResult(actionStore.index("visitId").getAll(visitId)) as FollowUpAction[];
     const now = new Date().toISOString();
     for (const observation of observations) {
-      const existing = actions.find((action) => action.observationId === observation.id);
+      const linked = actions.filter((action) => action.observationId === observation.id);
+      const existing = linked[0];
       if (observation.createAction) {
+        if (linked.some((action) => action.sourceEdited)) continue;
         actionStore.put({ ...existing, id: `action:${observation.id}`, visitId, observationId: observation.id,
           propertyId: visit.propertyId,
           zoneId: observation.zoneId, zoneLabel: observation.zoneLabel, propertyName: visit.propertyName,

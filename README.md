@@ -34,6 +34,7 @@ Le gestionnaire qui effectue la visite est également responsable de la validati
 - [Plan d'implémentation](PLAN-IMPLEMENTATION.md)
 - [Parcours mobile](PARCOURS-MOBILE.md)
 - [Préparation et consignes du pilote](BETA-PILOTE.md)
+- [Connexions et comptes](INTEGRATIONS-ET-COMPTES.md)
 
 ## Application active
 

@@ -32,6 +32,8 @@ Le pilote terrain remplace temporairement la priorité backend généraliste. Ne
 
 ### Lot C — conditions de mise à disposition
 
+Compléments implémentés localement après retours ergonomiques : vue d'ensemble des visites ouvertes, fenêtres desktop/mobile, PDF conservés par version et actions distinctes issues du même constat. Ports agenda/GED/annuaire préparés, sans compte connecté. Ces compléments ne sont pas encore publiés ; conserver une validation téléphone réelle et distinguer l'auteur déclaré d'un compte authentifié.
+
 - [ ] Raccorder une transcription sécurisée côté serveur, après choix du fournisseur et configuration des accès. Aucun secret dans le frontend.
 - [ ] Vérifier capture caméra, import, micro, reprise et export sur le téléphone réel du gestionnaire.
 - [ ] Publier après autorisation et vérifier le déploiement HTTPS et la mise à jour PWA.

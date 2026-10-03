@@ -1,5 +1,9 @@
 import type { VistaFieldState, VistaMedia } from "./vista-db";
 
+export function reportSignature(field: VistaFieldState) {
+  return JSON.stringify({ visit: [field.visit.propertyName, field.visit.address, field.visit.managerName, field.visit.scheduledAt, field.visit.status], zones: field.zones.map((item) => [item.zoneId, item.zoneLabel, item.status, item.inaccessibleReason]), observations: field.observations.map((item) => [item.id, item.updatedAt, item.text, item.severity, item.createAction, item.audio?.id, item.photos.map((photo) => photo.id)]), actions: field.actions.filter((item) => item.visitId === field.visit.id).sort((a, b) => a.id.localeCompare(b.id)).map((item) => [item.id, item.text, item.severity, item.status, item.assignee, item.dueDate]) });
+}
+
 type PdfFont = { widthOfTextAtSize: (value: string, size: number) => number; encodeText: (value: string) => unknown };
 type PdfImage = { width: number; height: number };
 type PdfPage = { drawText: (value: string, options: Record<string, unknown>) => void; drawRectangle: (options: Record<string, unknown>) => void; drawImage: (image: PdfImage, options: Record<string, unknown>) => void };
@@ -87,7 +91,7 @@ export async function generateVisitPdf(field: VistaFieldState): Promise<Blob> {
   text(`Gestionnaire : ${field.visit.managerName || "non renseigné"}`); text(`Référence : ${field.visit.id}`, { size: 8, hex: "#45524c" });
   y -= 8;
   const urgent = field.observations.filter((item) => item.severity === "urgent");
-  const selected = field.observations.filter((item) => item.createAction);
+  const selected = field.actions.filter((item) => item.visitId === field.visit.id).sort((a, b) => ({ urgent: 0, planned: 1, info: 2 }[a.severity] - { urgent: 0, planned: 1, info: 2 }[b.severity]));
   text("Synthèse", { size: 16, strong: true });
   text(`${field.zones.length} zones - ${field.observations.length} constat(s) - ${urgent.length} urgent(s) - ${selected.length} action(s) de suivi`);
   if (urgent.length) for (const item of urgent) text(`URGENT - ${item.zoneLabel} : ${excerpt(item.text || "Constat photographique", 220)}`, { strong: true, hex: "#9b2317" });
@@ -116,7 +120,7 @@ export async function generateVisitPdf(field: VistaFieldState): Promise<Blob> {
   room(65); y -= 12; text("Actions de suivi", { size: 16, strong: true });
   if (!selected.length) text("Aucune action de suivi sélectionnée.");
   for (const item of selected) {
-    const action = field.actions.find((entry) => entry.visitId === field.visit.id && entry.observationId === item.id);
+    const action = item;
     const description = excerpt(item.text || "Voir les photos du constat.", 300);
     room(lines(description, 11, regular).length * 16 + 80);
     text(`${severityLabels[item.severity ?? "info"]} - ${item.zoneLabel}`, { strong: true }); text(description);
@@ -132,6 +136,7 @@ export async function generateVisitPdf(field: VistaFieldState): Promise<Blob> {
 export async function generateVisitArchive(field: VistaFieldState): Promise<Blob> {
   await loadScript("/vendor/jszip.min.js"); if (!window.JSZip) throw new Error("Module de sauvegarde indisponible.");
   const zip = new window.JSZip(); const files = new Map<string, string>();
+  const reportRecords = field.reports.filter((item) => item.visitId === field.visit.id).map((item) => { const path = `comptes-rendus/v${item.version}.pdf`; zip.file(path, item.blob); return { id: item.id, version: item.version, createdAt: item.createdAt, fileName: item.fileName, path }; });
   function media(item?: VistaMedia) {
     if (!item) return undefined;
     let path = files.get(item.id);
@@ -141,7 +146,7 @@ export async function generateVisitArchive(field: VistaFieldState): Promise<Blob
     }
     return { id: item.id, mimeType: item.mimeType, fileName: item.fileName, createdAt: item.createdAt, path };
   }
-  const payload = { schema: "vista-visit-archive", version: 1, exportedAt: new Date().toISOString(), visit: { ...field.visit, accessNotes: undefined }, zones: field.zones,
+  const payload = { schema: "vista-visit-archive", version: 1, reports: reportRecords, exportedAt: new Date().toISOString(), visit: { ...field.visit, accessNotes: undefined }, zones: field.zones,
     observations: field.observations.map((item) => ({ ...item, audio: media(item.audio), photos: item.photos.map((photo) => media(photo)) })),
     drafts: field.drafts.map((item) => ({ ...item, audio: media(item.audio), photos: item.photos.map((photo) => media(photo)) })),
     actions: field.actions.filter((item) => item.visitId === field.visit.id) };

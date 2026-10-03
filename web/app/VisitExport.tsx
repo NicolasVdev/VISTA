@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { Download, FileText, LoaderCircle, Share2 } from "lucide-react";
-import type { VistaFieldState } from "./lib/vista-db";
-import { exportFileName, generateVisitArchive, generateVisitPdf, reportBlockers } from "./lib/vista-export";
+import { saveVisitReport, type VistaFieldState } from "./lib/vista-db";
+import { exportFileName, generateVisitArchive, generateVisitPdf, reportBlockers, reportSignature } from "./lib/vista-export";
 
-export default function VisitExport({ field }: { field: VistaFieldState }) {
+export default function VisitExport({ field, onSaved }: { field: VistaFieldState; onSaved: () => Promise<void> }) {
   const [reviewed, setReviewed] = useState(false); const [busy, setBusy] = useState(false); const [error, setError] = useState("");
   const [prepared, setPrepared] = useState<{ file: File; url: string; kind: "pdf" | "zip" } | null>(null);
+  const [reports, setReports] = useState(() => field.reports.filter((item) => item.visitId === field.visit.id).sort((a, b) => b.version - a.version));
   const activeUrl = useRef(""); const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; if (activeUrl.current) URL.revokeObjectURL(activeUrl.current); }; }, []);
   const blockers = reportBlockers(field); const audio = field.observations.filter((item) => item.audio).length;
@@ -15,7 +16,12 @@ export default function VisitExport({ field }: { field: VistaFieldState }) {
     try {
       const blob = kind === "pdf" ? await generateVisitPdf(field) : await generateVisitArchive(field);
       if (!mounted.current) return;
-      const file = new File([blob], exportFileName(field, kind), { type: blob.type });
+      let name = exportFileName(field, kind);
+      if (kind === "pdf") {
+        const saved = await saveVisitReport({ visitId: field.visit.id, blob, fileName: name, sourceSignature: reportSignature(field) });
+        setReports((items) => [saved, ...items]); name = saved.fileName; await onSaved();
+      }
+      const file = new File([blob], name, { type: blob.type });
       if (activeUrl.current) URL.revokeObjectURL(activeUrl.current);
       const url = URL.createObjectURL(file); activeUrl.current = url; setPrepared({ file, url, kind });
     } catch (cause) { if (mounted.current) setError(cause instanceof Error ? cause.message : "Export impossible. Les données de la visite sont conservées ; réessayez."); }
@@ -23,6 +29,7 @@ export default function VisitExport({ field }: { field: VistaFieldState }) {
   }
   const shareable = prepared && typeof navigator.canShare === "function" && navigator.canShare({ files: [prepared.file] });
   return <section className="visit-export"><h2>Compte rendu et sauvegarde</h2><p className="muted">{field.visit.propertyName} · {field.zones.length} zones · {field.observations.length} constats</p>
+    {reports.length > 0 && <section className="saved-reports"><h3>PDF déjà générés · {reports.length}</h3><p>Conservés sur cet appareil. Une nouvelle génération crée une nouvelle version.</p>{reports.map((report) => <article key={report.id}><strong>Version {report.version} · {new Date(report.createdAt).toLocaleString("fr-FR")}</strong>{report.sourceSignature !== reportSignature(field) && <p className="draft-warning">Version antérieure : la visite ou les actions ont changé depuis ce PDF.</p>}<button className="secondary-action" onClick={() => { if (activeUrl.current) URL.revokeObjectURL(activeUrl.current); const file = new File([report.blob], report.fileName, { type: "application/pdf" }); const url = URL.createObjectURL(file); activeUrl.current = url; setPrepared({ file, url, kind: "pdf" }); }}>Consulter la version {report.version}</button></article>)}</section>}
     <article className="export-summary"><FileText size={24} aria-hidden="true" /><strong>PDF pour le conseil syndical</strong><p>Résumé, constats par zone, photos légendées et actions. Les codes et contacts privés de la copropriété sont exclus.</p></article>
     {audio > 0 && <p className="draft-warning">{audio} note(s) vocale(s). La transcription automatique n’est pas encore raccordée : écoutez chaque note et complétez le texte avant de valider le compte rendu. Les audios sont conservés dans la sauvegarde, pas dans le PDF.</p>}
     {draftCount > 0 && <p className="draft-warning">{draftCount} brouillon(s) non ajouté(s) seront exclus du PDF, mais inclus dans la sauvegarde.</p>}
@@ -31,6 +38,6 @@ export default function VisitExport({ field }: { field: VistaFieldState }) {
     <button className="primary-action" disabled={busy || !reviewed || blockers.length > 0} onClick={() => prepare("pdf")}>Préparer le PDF{busy ? <LoaderCircle className="saving-spinner" size={20} aria-hidden="true" /> : <FileText size={20} aria-hidden="true" />}</button>
     <div className="export-backup"><h3>Sauvegarde complète de la visite</h3><p>Archive ZIP : récapitulatif lisible, données structurées, photos et notes vocales originales, brouillons compris. Conservez-la dans un emplacement privé. Les accès privés sont exclus ; la réimportation dans VISTA n’est pas encore disponible.</p><button className="secondary-action" disabled={busy} onClick={() => prepare("zip")}>Préparer la sauvegarde<Download size={20} aria-hidden="true" /></button></div>
     {error && <p className="error-banner" role="alert">{error}</p>}
-    {prepared && <div className="prepared-export" role="status"><strong>{prepared.kind === "pdf" ? "PDF prêt" : "Sauvegarde prête"}</strong><small>{prepared.file.name} · {(prepared.file.size / 1024 / 1024).toFixed(2)} Mo</small><a className="primary-action" href={prepared.url} download={prepared.file.name}>Télécharger {prepared.kind === "pdf" ? "le PDF" : "la sauvegarde"}<Download size={20} aria-hidden="true" /></a>{shareable && <button className="secondary-action" onClick={async () => { try { await navigator.share({ files: [prepared.file], title: `VISTA - ${field.visit.propertyName}` }); } catch (cause) { if (!(cause instanceof DOMException && cause.name === "AbortError")) setError("Le partage n’est pas disponible. Téléchargez le fichier et joignez-le depuis votre messagerie."); } }}>Partager le fichier<Share2 size={20} aria-hidden="true" /></button>}<p>Ouvrez le fichier téléchargé pour vérifier son contenu, puis joignez-le à un mail depuis votre messagerie habituelle.</p></div>}
+    {prepared && <div className="prepared-export" role="status"><strong>{prepared.kind === "pdf" ? "PDF prêt" : "Sauvegarde prête"}</strong><small>{prepared.file.name} · {(prepared.file.size / 1024 / 1024).toFixed(2)} Mo</small>{prepared.kind === "pdf" && <a className="secondary-action" href={prepared.url} target="_blank" rel="noreferrer">Ouvrir le PDF</a>}<a className="primary-action" href={prepared.url} download={prepared.file.name}>Télécharger {prepared.kind === "pdf" ? "le PDF" : "la sauvegarde"}<Download size={20} aria-hidden="true" /></a>{shareable && <button className="secondary-action" onClick={async () => { try { await navigator.share({ files: [prepared.file], title: `VISTA - ${field.visit.propertyName}` }); } catch (cause) { if (!(cause instanceof DOMException && cause.name === "AbortError")) setError("Le partage n’est pas disponible. Téléchargez le fichier et joignez-le depuis votre messagerie."); } }}>Partager le fichier<Share2 size={20} aria-hidden="true" /></button>}<p>Ouvrez le fichier téléchargé pour vérifier son contenu, puis joignez-le à un mail depuis votre messagerie habituelle.</p></div>}
   </section>;
 }

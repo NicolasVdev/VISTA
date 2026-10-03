@@ -30,7 +30,7 @@ export default function VisitSetup({ mode, field, defaultRoute, onCreate, onSave
       {mode === "new" && <>
         <label className="form-field">Résidence<input name="propertyName" required maxLength={150} autoComplete="organization" /></label>
         <label className="form-field">Adresse<input name="address" required maxLength={250} autoComplete="street-address" /></label>
-        <label className="form-field">Gestionnaire<input name="managerName" required maxLength={100} defaultValue={field.visit.managerName ?? ""} autoComplete="name" /></label>
+        <label className="form-field">Gestionnaire<input name="managerName" required maxLength={100} autoComplete="off" placeholder="Auteur de cette visite (ce n’est pas une connexion)" /></label>
         <label className="form-field">Date et heure de visite<input name="scheduledAt" type="datetime-local" required defaultValue={localDate} /></label>
       </>}
       <div className="section-title"><h3>Parcours · {route.length} zones</h3><small>Dans l’ordre de la visite</small></div>
