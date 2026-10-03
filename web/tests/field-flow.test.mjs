@@ -502,6 +502,19 @@ test("field UX and IndexedDB v2 → v6 regression suite", { skip: !playwright },
     assert.equal(await overview.getByLabel("Gestionnaire", { exact: true }).inputValue(), "");
     await overview.getByRole("button", { name: "Fermer", exact: true }).click();
     await overview.locator(".install-card-main").click(); await overview.getByRole("dialog", { name: "Installer VISTA" }).waitFor();
+    await overview.getByRole("button", { name: "Fermer", exact: true }).click();
+    await overview.getByRole("button", { name: "Visites", exact: true }).click();
+    for (const width of [1440, 360]) {
+      await overview.setViewportSize({ width, height: 900 });
+      const dates = await overview.locator(".date-tile").evaluateAll((elements) => elements.map((element) => {
+        const tile = element.getBoundingClientRect(), month = element.querySelector(".date-tile-month").getBoundingClientRect(), day = element.querySelector("strong").getBoundingClientRect();
+        const middle = tile.x + tile.width / 2;
+        return { monthCentered: Math.abs(month.x + month.width / 2 - middle) < 1, dayCentered: Math.abs(day.x + day.width / 2 - middle) < 1, stacked: month.bottom < day.top, verticallyCentered: Math.abs((month.top + day.bottom) / 2 - (tile.y + tile.height / 2)) < 1 };
+      }));
+      assert.ok(dates.length > 0);
+      assert.ok(dates.every((date) => date.monthCentered && date.dayCentered && date.stacked && date.verticallyCentered));
+      await overview.screenshot({ path: fileURLToPath(new URL(`../artifacts/history-dates-${width}.png`, import.meta.url)) });
+    }
     await overviewContext.close();
   });
 
