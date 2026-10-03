@@ -541,9 +541,12 @@ p { margin: 0 0 12px; }
 .install-sheet::-webkit-scrollbar-track { background: var(--line-soft); }
 @media (min-width: 760px) { .sheet-backdrop { align-items: center; padding: 24px; } .install-sheet { border-radius: 24px; max-height: calc(100dvh - 48px); } .sheet-handle { display: none; } .install-sheet { padding-top: 24px; } }
 .home-visits { margin: 16px 0 24px; }
-.overview-visit { width: 100%; margin-top: 8px; text-align: left; }
+.overview-visit { grid-template-columns: minmax(0, 1fr) auto; width: 100%; margin-top: 8px; border-width: 2px; text-align: left; }
+.overview-visit > span:first-child { display: grid; min-width: 0; gap: 5px; }
+.overview-visit strong { line-height: 1.35; overflow-wrap: anywhere; }
+.overview-visit > svg { justify-self: end; }
 .overview-visit[aria-pressed="true"] { border: 2px solid var(--brand); background: var(--brand-soft); }
-.overview-visit small { white-space: normal; }
+.overview-visit small { display: block; line-height: 1.5; white-space: normal; overflow-wrap: anywhere; }
 .install-card { grid-template-columns: minmax(0,1fr) auto; }
 .install-card-main { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 64px; border: 0; background: transparent; color: var(--foreground); text-align: left; cursor: pointer; padding: 8px; }
 .install-card-main > span { flex: 1; }

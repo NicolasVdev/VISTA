@@ -487,6 +487,15 @@ test("field UX and IndexedDB v2 → v6 regression suite", { skip: !playwright },
     await overview.reload(); const cards = overview.locator(".overview-visit"); await cards.first().waitFor();
     assert.equal(await cards.count(), 4);
     const names = await cards.allTextContents(); assert.ok(names.findIndex((item) => item.includes("Visite du 7")) < names.findIndex((item) => item.includes("Visite du 8")));
+    for (const width of [1440, 360]) {
+      await overview.setViewportSize({ width, height: 900 });
+      const layouts = await cards.evaluateAll((elements) => elements.map((element) => {
+        const card = element.getBoundingClientRect(), title = element.querySelector("strong").getBoundingClientRect(), details = element.querySelector("small").getBoundingClientRect(), icon = element.querySelector("svg").getBoundingClientRect();
+        return { separateLines: details.top >= title.bottom, iconAtRight: card.right - icon.right < 24, fits: element.scrollWidth <= element.clientWidth };
+      }));
+      assert.ok(layouts.every((item) => item.separateLines && item.iconAtRight && item.fits));
+      await overview.screenshot({ path: fileURLToPath(new URL(`../artifacts/overview-cards-${width}.png`, import.meta.url)) });
+    }
     await cards.filter({ hasText: "Visite du 7" }).click();
     await overview.locator(".visit-card h2").filter({ hasText: "Visite du 7" }).waitFor();
     await overview.getByRole("button", { name: "Nouvelle visite", exact: true }).click();
