@@ -410,6 +410,54 @@ test("field UX and IndexedDB v2 → v6 regression suite", { skip: !playwright },
     await exportContext.close();
   });
 
+  await t.test("PDF paginates long actions and preserves full identities and photo context", async () => {
+    const pdfPage = await context.newPage(); await pdfPage.goto(origin);
+    const result = await pdfPage.evaluate(async () => {
+      const db = await import("/app/lib/vista-db.ts"); const exporter = await import("/app/lib/vista-export.ts");
+      const state = await db.loadFieldState([{ id: "hall", label: "Hall", hint: "" }]);
+      const now = new Date().toISOString();
+      const zone = { ...state.zones[0], zoneId: "long", zoneLabel: "Terrasse et équipements techniques du bâtiment principal", status: "observed" };
+      const canvas = document.createElement("canvas"); canvas.width = 200; canvas.height = 300;
+      const ctx = canvas.getContext("2d"); ctx.fillStyle = "#1e6b4f"; ctx.fillRect(0, 0, 200, 300);
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+      const field = { ...state, visit: { ...state.visit, status: "completed", managerName: "Jean-Baptiste de la Tour du Pin Gestionnaire intégral", propertyName: "Résidence des Grands Jardins de la Plaine Saint-Denis - Bâtiments A, B et C" }, zones: [zone], observations: [{ id: "obs-long", zoneId: zone.zoneId, zoneLabel: zone.zoneLabel, text: "Observation complète.", severity: "urgent", photos: [{ id: "photo", blob, fileName: "test.png", createdAt: now }], createAction: true }], actions: [{ id: "long-action", visitId: state.visit.id, zoneId: zone.zoneId, zoneLabel: zone.zoneLabel, text: "Intervention longue à conserver intégralement. ".repeat(200) + "FIN-ACTION-INTÉGRALE", assignee: "Société Générale des Interventions Techniques Nom complet", dueDate: "2026-10-31", severity: "urgent", status: "open" }] };
+      await exporter.generateVisitPdf({ ...field, actions: [] }); // Load the real vendor bundle.
+      const factory = window.PDFLib.PDFDocument.create;
+      const draws = []; const documents = [];
+      window.PDFLib.PDFDocument.create = async () => {
+        const doc = await factory(); documents.push(doc); const add = doc.addPage.bind(doc);
+        doc.addPage = (...args) => {
+          const page = add(...args); const draw = page.drawText.bind(page);
+          page.drawText = (text, options) => { draws.push({ text, x: options.x, y: options.y, right: options.x + options.font.widthOfTextAtSize(text, options.size) }); return draw(text, options); };
+          return page;
+        };
+        return doc;
+      };
+      let pdf, emptyPdf;
+      try {
+        pdf = await exporter.generateVisitPdf(field);
+        emptyPdf = await exporter.generateVisitPdf({ ...field, visit: { ...field.visit, propertyName: "Visite sans constat", managerName: "Gestionnaire test" }, zones: [{ ...zone, zoneLabel: "Hall", status: "clear" }], observations: [], actions: [] });
+      } finally { window.PDFLib.PDFDocument.create = factory; }
+      const link = document.createElement("a"); link.href = URL.createObjectURL(pdf); link.download = "pdf-long-actions.pdf"; link.textContent = "Long PDF"; document.body.append(link);
+      const emptyLink = document.createElement("a"); emptyLink.href = URL.createObjectURL(emptyPdf); emptyLink.download = "pdf-empty.pdf"; emptyLink.textContent = "Empty PDF"; document.body.append(emptyLink);
+      return { draws, size: pdf.size, emptyPages: documents[1].getPageCount() };
+    });
+    const text = result.draws.map((item) => item.text).join(" ");
+    assert.match(text, /Jean-Baptiste de la Tour du Pin Gestionnaire intégral/);
+    const treatmentText = result.draws.filter((item) => Math.abs(item.x - 420) < 0.1).map((item) => item.text).join(" ");
+    assert.match(treatmentText, /Société Générale des Interventions Techniques Nom complet/);
+    assert.match(text, /FIN-ACTION-INTÉGRALE/);
+    assert.match(text, /constat 1 - photo 1/);
+    assert.match(text, /\(suite\)/);
+    assert.equal(result.emptyPages, 1);
+    assert.deepEqual(result.draws.filter((item) => item.y < 40 || item.right > 549 || item.x < 48), []);
+    const download = pdfPage.waitForEvent("download"); await pdfPage.getByRole("link", { name: "Long PDF" }).click();
+    await (await download).saveAs(fileURLToPath(new URL("../artifacts/pdf-long-actions.pdf", import.meta.url)));
+    const emptyDownload = pdfPage.waitForEvent("download"); await pdfPage.getByRole("link", { name: "Empty PDF" }).click();
+    await (await emptyDownload).saveAs(fileURLToPath(new URL("../artifacts/pdf-empty.pdf", import.meta.url)));
+    await pdfPage.close();
+  });
+
   await t.test("dialogs center on desktop and scroll to their last control on short mobile", async () => {
     const modalContext = await browser.newContext({ viewport: { width: 1440, height: 900 } }); const modal = await modalContext.newPage();
     await modal.goto(origin); await modal.getByRole("button", { name: "Nouvelle visite", exact: true }).click();
