@@ -237,8 +237,8 @@ export async function generateVisitPdf(field: VistaFieldState): Promise<Blob> {
   rect({ x: margin, y: H - 58, w: 28, h: 28, hex: BRAND });
   put("V", { x: margin + 9.5, y: H - 51.5, size: 15, font: bold, hex: "#ffffff" });
   track("VISTA", { x: margin + 40, y: H - 51, size: 13, track: 3.4, hex: "#ffffff" });
-  const tagline = "VISITES · INSPECTIONS · SUIVI TECHNIQUE";
-  track(tagline, { x: margin + usable - trackWidth(tagline, 7.5, bold, 1.5), y: H - 48.5, size: 7.5, track: 1.5, hex: "#ffffff", opacity: 0.55 });
+  const tagline = "VISITES · INSPECTIONS · SUIVI TECHNIQUE · ACTIONS";
+  track(tagline, { x: margin + usable - trackWidth(tagline, 7, bold, 0.8), y: H - 48.5, size: 7, track: 0.8, hex: "#ffffff", opacity: 0.7 });
   let bandY = H - 92;
   track("COMPTE RENDU DE VISITE", { x: margin, y: bandY, size: 8, track: 1.8, hex: "#ffffff", opacity: 0.6 });
   bandY -= 32;
@@ -250,13 +250,13 @@ export async function generateVisitPdf(field: VistaFieldState): Promise<Blob> {
   const meta: [string, string, number][] = [
     ["DATE DE LA VISITE", `${frDate(visit.scheduledAt)} · ${frTime(visit.scheduledAt)}`, 10],
     ["GESTIONNAIRE", visit.managerName || "non renseigné", 10],
-    ["RÉFÉRENCE", visit.id, 8],
   ];
-  const metaHeight = Math.max(...meta.map(([, value, size]) => wrap(value, size, regular, usable / 3 - 14).length * 13));
+  const metaWidth = usable / meta.length;
+  const metaHeight = Math.max(...meta.map(([, value, size]) => wrap(value, size, regular, metaWidth - 14).length * 13));
   meta.forEach(([label, value, size], index) => {
-    const x = margin + index * (usable / 3);
+    const x = margin + index * metaWidth;
     track(label, { x, y: y - 8, size: 7, track: 1.1, hex: SOFT });
-    wrap(value, size, regular, usable / 3 - 14).forEach((line, lineIndex) => put(line, { x, y: y - 24 - lineIndex * 13, size, hex: INK }));
+    wrap(value, size, regular, metaWidth - 14).forEach((line, lineIndex) => put(line, { x, y: y - 24 - lineIndex * 13, size, hex: INK }));
   });
   gap(23 + metaHeight);
   rect({ x: margin, y, w: usable, h: 0.6, hex: LINE });
@@ -304,16 +304,16 @@ export async function generateVisitPdf(field: VistaFieldState): Promise<Blob> {
   for (const zone of field.zones) {
     const zoneLines = wrap(zone.zoneLabel, 10.5, bold, 285);
     const reason = zone.inaccessibleReason ? reasonLabels[zone.inaccessibleReason] : "";
-    const reasonLines = reason ? wrap(reason, 8, regular, usable - 300) : [];
+    const reasonLines = reason ? wrap(reason, 8, regular, usable - 370) : [];
     const rowHeight = Math.max(24, zoneLines.length * 14 + 10, 24 + reasonLines.length * 11);
     room(rowHeight + 15);
     if (sheet !== zoneSheet) { zoneSheet = sheet; columns(zoneColumns); }
     const count = counted(zone.zoneId);
     const tone = ZONE_TONE[zone.status];
     zoneLines.forEach((line, index) => put(line, { x: margin, y: y - 16 - index * 14, size: 10.5, font: bold, hex: INK }));
-    put(count ? plural(count, "constat") : "-", { x: margin + 300, y: y - 16, size: 9.5, hex: count ? INK : "#b4bcb7" });
+    put(count ? plural(count, "constat") : "0 constat", { x: margin + 300, y: y - 16, size: 9.5, hex: count ? INK : SOFT });
     chip(statusLabels[zone.status], { right: margin + usable, y: y - 19, bg: tone.bg, fg: tone.fg, size: 8 });
-    reasonLines.forEach((line, index) => put(line, { x: margin + 300, y: y - 29 - index * 11, size: 8, hex: tone.fg }));
+    reasonLines.forEach((line, index) => put(line, { x: margin + usable - regular.widthOfTextAtSize(clean(line), 8), y: y - 30 - index * 11, size: 8, hex: tone.fg }));
     gap(rowHeight);
     rect({ x: margin, y, w: usable, h: 0.5, hex: HAIR });
   }
@@ -400,10 +400,11 @@ export async function generateVisitPdf(field: VistaFieldState): Promise<Blob> {
         ...wrap(action.text?.trim() || "Voir les photos du constat.", 10, regular, colB).map((line) => ({ line, strong: false })),
       ];
       const treatment = [
-        "INTERVENANT",
-        ...wrap(action.assignee || "à désigner", 9.5, regular, colC),
-        "ÉCHÉANCE",
-        ...wrap(frDueDate(action.dueDate), 9.5, regular, colC),
+        { line: "Intervenant", label: true },
+        ...wrap(action.assignee || "À désigner", 9.5, bold, colC).map((line) => ({ line, label: false })),
+        { line: "", label: true },
+        { line: "Échéance", label: true },
+        ...wrap(frDueDate(action.dueDate), 9.5, bold, colC).map((line) => ({ line, label: false })),
       ];
       let contentIndex = 0, treatmentIndex = 0, continued = false;
       while (contentIndex < content.length || treatmentIndex < treatment.length) {
@@ -421,8 +422,8 @@ export async function generateVisitPdf(field: VistaFieldState): Promise<Blob> {
         for (let index = 0; index < count; index += 1) {
           const entry = content[contentIndex + index];
           if (entry) put(entry.line, { x: margin + colA + 12, y: y - contextHeight - 12 - index * 14, size: entry.strong ? 10.5 : 10, font: entry.strong ? bold : regular, hex: entry.strong ? INK : MUTED });
-          const line = treatment[treatmentIndex + index];
-          if (line) put(line, { x: margin + colA + colB + 24, y: y - contextHeight - 12 - index * 14, size: 9.5, hex: INK });
+          const treatmentLine = treatment[treatmentIndex + index];
+          if (treatmentLine?.line) put(treatmentLine.line, { x: margin + colA + colB + 24, y: y - contextHeight - 12 - index * 14, size: treatmentLine.label ? 8 : 9.5, font: treatmentLine.label ? regular : bold, hex: treatmentLine.label ? SOFT : INK });
         }
         gap(Math.max(46, contextHeight + count * 14));
         rect({ x: margin, y, w: usable, h: 0.5, hex: HAIR });

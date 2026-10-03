@@ -447,6 +447,10 @@ test("field UX and IndexedDB v2 → v6 regression suite", { skip: !playwright },
     const treatmentText = result.draws.filter((item) => Math.abs(item.x - 420) < 0.1).map((item) => item.text).join(" ");
     assert.match(treatmentText, /Société Générale des Interventions Techniques Nom complet/);
     assert.match(text, /FIN-ACTION-INTÉGRALE/);
+    assert.equal(text.includes("residence-parc-2026-09-30"), false);
+    assert.equal(result.draws.some((item) => item.text === "INTERVENANT" || item.text === "ÉCHÉANCE"), false);
+    assert.ok(result.draws.some((item) => item.text === "Intervenant"));
+    assert.ok(result.draws.some((item) => item.text === "0 constat"));
     assert.match(text, /constat 1 - photo 1/);
     assert.match(text, /\(suite\)/);
     assert.equal(result.emptyPages, 1);
